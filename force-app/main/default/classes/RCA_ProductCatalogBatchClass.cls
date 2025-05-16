@@ -1,111 +1,179 @@
-global class RCA_ProductCatalogBatchClass implements Database.Batchable<SObject> {
+global class RCA_ProductCatalogBatchClass implements Database.Batchable<SObject>, Database.Stateful {
 
+    private List<Id> productIds;
+    private List<String> errorMessages = new List<String>();
+
+    global RCA_ProductCatalogBatchClass() {}
+    global RCA_ProductCatalogBatchClass(List<Id> productIds) {
+        this.productIds = productIds;
+    }
 
     global Database.QueryLocator start(Database.BatchableContext bc) {
-        return Database.getQueryLocator(
-            'SELECT Id, Name, ProductCode, IsActive, SBQQ__ConfigurationType__c, SBQQ__Component__c,StockKeepingUnit,(SELECT Id, SBQQ__Bundled__c FROM SBQQ__Options__r),(SELECT Id FROM SBQQ__Features__r) FROM Product2'
-        );
+
+        String baseQuery =
+            'SELECT Id, Name, ProductCode, IsActive, SBQQ__ConfigurationType__c, ' +
+            'SBQQ__Component__c, StockKeepingUnit, ' +
+            '(SELECT Id, SBQQ__OptionalSKU__c, SBQQ__Number__c, SBQQ__Selected__c, ' +
+            'SBQQ__Required__c, SBQQ__Quantity__c, SBQQ__Feature__c, SBQQ__Feature__r.Name, ' +
+            'SBQQ__QuantityEditable__c, SBQQ__MinQuantity__c, SBQQ__MaxQuantity__c, ' +
+            'SBQQ__Bundled__c FROM SBQQ__Options__r), ' +
+            '(SELECT Id, Name, SBQQ__MinOptionCount__c, SBQQ__MaxOptionCount__c, ' +
+            'SBQQ__Number__c FROM SBQQ__Features__r) ' +
+            'FROM Product2 ' + 'WHERE IsProcessed__c = FALSE';
+
+        if (productIds != null && !productIds.isEmpty()) {
+            baseQuery += ' AND Id IN :productIds';
+        }
+        return Database.getQueryLocator(baseQuery);
     }
 
     global void execute(Database.BatchableContext bc, List<Product2> scope) {
+        Id rtId      = RCA_ProductCatalogHelper.getRecordTypeId();
+        Id relTypeId = RCA_ProductCatalogHelper.getRelationshipTypeId();
 
-        List<ProductCategory> category = [SELECT Id FROM ProductCategory WHERE Name = 'default category'];
-        List<Product2> newProductList = new List<Product2>();
-        List<Product2> updateProductList = new List<Product2>();
+        Map<Id, List<SBQQ__ProductFeature__c>> featureMap = 
+            RCA_ProductCatalogHelper.fetchFeatures(scope);
+        Map<Id, List<SBQQ__ProductOption__c>> optionMap  = 
+            RCA_ProductCatalogHelper.fetchOptions(scope);
 
-        List<RecordType> recordTypeIdList = [
-            SELECT Id FROM RecordType WHERE Name = 'Commercial' AND SObjectType = 'Product2'
-        ];
-        Id commercialRecordTypeId = recordTypeIdList.isEmpty() ? null : recordTypeIdList[0].Id;
+        List<Product2> newProds = new List<Product2>();
+        List<Product2> updProds = new List<Product2>();
+        Map<Id, Product2> origToNew = RCA_ProductCatalogHelper.buildProducts(
+            scope, featureMap, optionMap, newProds, updProds, rtId
+        );
 
-        for (Product2 cpqProduct : scope) {
-            //Why are we cheacking for null features, CPQ can have child products even without features right?
+        // 1) create bundles
+        insertNewProducts(newProds);
 
-            //If Bundle products in CPQ, create new eauivalent products in RCA
-            if ((cpqProduct.SBQQ__Options__r != null && !cpqProduct.SBQQ__Options__r.isEmpty()) || (cpqProduct.SBQQ__Features__r != null && !cpqProduct.SBQQ__Features__r.isEmpty())) {
-                Product2 newProduct = new Product2();
-                newProduct.Name = cpqProduct.Name;
-                newProduct.ProductCode = cpqProduct.ProductCode;
-                newProduct.IsActive = cpqProduct.IsActive;
-                newProduct.ConfigureDuringSale = cpqProduct.SBQQ__ConfigurationType__c;
-                newProduct.Type = 'Bundle';
-                if (String.isBlank(cpqProduct.StockKeepingUnit)) {
-                    String firstThree = cpqProduct.Name.substring(0, 3).toUpperCase();
-                    newProduct.StockKeepingUnit = firstThree + 'Bundle';
-                } else {
-                    newProduct.StockKeepingUnit = cpqProduct.StockKeepingUnit + 'Bundle';
+        // 2) flag originals as processed
+        flagProcessed(origToNew.keySet());
+
+        // 3) update original metadata (ConfigureDuringSale etc)
+        updateOriginalProducts(updProds);
+
+        // 4) assign default category
+        Id catId = RCA_ProductCatalogHelper.getCategoryId();
+        if (catId != null) {
+            RCA_ProductCatalogHelper.assignCategory(
+                RCA_ProductCatalogHelper.getAllIds(newProds, updProds),
+                catId
+            );
+        }
+
+        // 5) build & insert component groups
+        List<ProductComponentGroup> groups = 
+            RCA_ProductCatalogHelper.buildComponentGroups(origToNew, featureMap);
+        insertGroups(groups);
+
+        // 6) build & insert related components
+        List<ProductRelatedComponent> rels = 
+            RCA_ProductCatalogHelper.buildRelatedComponents(
+                origToNew, optionMap, groups, relTypeId
+            );
+        insertRelatedComponents(rels);
+    }
+
+    private void insertNewProducts(List<Product2> records) {
+        if (records.isEmpty()) return;
+        List<Database.SaveResult> results = Database.insert(records, false);
+        for (Integer i = 0; i < results.size(); i++) {
+            if (!results[i].isSuccess()) {
+                for (Database.Error err : results[i].getErrors()) {
+                    errorMessages.add(
+                        'Insert NewProd['+i+'] Name:'+records[i].Name+
+                        ' – '+err.getStatusCode()+': '+err.getMessage()
+                    );
                 }
-                newProduct.RecordTypeId = commercialRecordTypeId;
-                newProductList.add(newProduct);
             } else {
-                //update existing products with RCA equivalent data for standalone products - 
-                cpqProduct.ConfigureDuringSale = cpqProduct.SBQQ__ConfigurationType__c;
-                cpqProduct.IsSoldOnlyWithOtherProds = cpqProduct.SBQQ__Component__c;
-                updateProductList.add(cpqProduct);
+                // capture new Id for downstream grouping
+                records[i].Id = results[i].getId();
             }
         }
+    }
 
-        if (!newProductList.isEmpty()) {
-            insert newProductList;
+    private void flagProcessed(Set<Id> originalIds) {
+        if (originalIds.isEmpty()) return;
+        List<Product2> toFlag = new List<Product2>();
+        for (Id origId : originalIds) {
+            toFlag.add(new Product2(
+                Id = origId,
+                IsProcessed__c = true
+            ));
         }
-        if (!updateProductList.isEmpty()) {
-            update updateProductList;
-        }
-
-        // Assign new products to catalogs - 
-        List<ProductCategoryProduct> productCategoryProductList = new List<ProductCategoryProduct>();
-        for (Product2 product : newProductList) {
-            //Is only sold with other will always be false as per above logic while creating new Products?
-            if (product.IsSoldOnlyWithOtherProds == false) {
-                ProductCategoryProduct productCat = new ProductCategoryProduct();
-                productCat.ProductId = product.Id;
-                productCat.ProductCategoryId = category[0].Id;
-                productCategoryProductList.add(productCat);
+        List<Database.SaveResult> results = Database.update(toFlag, false);
+        for (Integer i = 0; i < results.size(); i++) {
+            if (!results[i].isSuccess()) {
+                for (Database.Error err : results[i].getErrors()) {
+                    errorMessages.add(
+                        'FlagProcessed['+i+'] OrigId:'+toFlag[i].Id+
+                        ' – '+err.getStatusCode()+': '+err.getMessage()
+                    );
+                }
             }
         }
+    }
 
-        // Assign old products to catalogs - 
-        for (Product2 product : updateProductList) {
-            if (product.IsSoldOnlyWithOtherProds == false) {
-                ProductCategoryProduct productCat = new ProductCategoryProduct();
-                productCat.ProductId = product.Id;
-                productCat.ProductCategoryId = category[0].Id;
-                productCategoryProductList.add(productCat);
+    private void updateOriginalProducts(List<Product2> records) {
+        if (records.isEmpty()) return;
+        List<Database.SaveResult> results = Database.update(records, false);
+        for (Integer i = 0; i < results.size(); i++) {
+            if (!results[i].isSuccess()) {
+                for (Database.Error err : results[i].getErrors()) {
+                    errorMessages.add(
+                        'Update OrigProd['+i+'] Id:'+records[i].Id+
+                        ' – '+err.getStatusCode()+': '+err.getMessage()
+                    );
+                }
             }
         }
+    }
 
-        if (!productCategoryProductList.isEmpty()) {
-            insert productCategoryProductList;
-        }
-
-        //Create productComponentGroup in RCA with equivalent data to Features in CPQ - 
-        List<ProductComponentGroup> newComponentGroups = new List<ProductComponentGroup>();
-        
-        for (Product2 products : newProductList) {
-            String pname = products.Name;
-            List<SBQQ__ProductFeature__c> featureList = [
-                SELECT Name, SBQQ__ConfiguredSKU__r.Name, SBQQ__MinOptionCount__c, SBQQ__MaxOptionCount__c, SBQQ__Number__c
-                FROM SBQQ__ProductFeature__c WHERE SBQQ__ConfiguredSKU__r.Name = :pname
-            ];
-            for (SBQQ__ProductFeature__c features : featureList) {
-                ProductComponentGroup productCG = new ProductComponentGroup();
-                productCG.Name = features.Name;
-                productCG.MinBundleComponents = (Integer)features.SBQQ__MinOptionCount__c;
-                productCG.MaxBundleComponents = (Integer)features.SBQQ__MaxOptionCount__c;
-                productCG.Sequence = (Integer)features.SBQQ__Number__c;
-                productCG.ParentProductId = products.Id;
-                newComponentGroups.add(productCG);
+    private void insertGroups(List<ProductComponentGroup> records) {
+        if (records.isEmpty()) return;
+        List<Database.SaveResult> results = Database.insert(records, false);
+        for (Integer i = 0; i < results.size(); i++) {
+            if (!results[i].isSuccess()) {
+                for (Database.Error err : results[i].getErrors()) {
+                    errorMessages.add(
+                        'Insert Group['+i+'] Parent:'+records[i].ParentProductId+
+                        ' – '+err.getStatusCode()+': '+err.getMessage()
+                    );
+                }
+            } else {
+                records[i].Id = results[i].getId();
             }
         }
+    }
 
-        if (!newComponentGroups.isEmpty()) {
-            insert newComponentGroups;
+    private void insertRelatedComponents(List<ProductRelatedComponent> records) {
+        if (records.isEmpty()) return;
+        List<Database.SaveResult> results = Database.insert(records, false);
+        for (Integer i = 0; i < results.size(); i++) {
+            if (!results[i].isSuccess()) {
+                for (Database.Error err : results[i].getErrors()) {
+                    errorMessages.add(
+                        'Insert RelComp['+i+'] Parent:'+records[i].ParentProductId+
+                        ' Child:'+records[i].ChildProductId+
+                        ' – '+err.getStatusCode()+': '+err.getMessage()
+                    );
+                }
+            }
         }
-
-        
     }
 
     global void finish(Database.BatchableContext bc) {
-        System.debug('Batch job completed.');
+        if (errorMessages.isEmpty()) {
+            System.debug('Batch completed with no errors.');
+            return;
+        }
+        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+        mail.setToAddresses(new String[]{'ops-team@example.com'});
+        mail.setSubject('RCA ProdCatalog Batch Errors – ' + 
+                        Datetime.now().format('yyyy-MM-dd HH:mm'));
+        mail.setPlainTextBody(
+            'Errors in RCA_ProductCatalogBatchClass:\n\n' +
+            String.join(errorMessages, '\n')
+        );
+        Messaging.sendEmail(new Messaging.SingleEmailMessage[]{ mail });
     }
 }
