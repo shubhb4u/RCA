@@ -167,7 +167,7 @@ global class RCA_ProductCatalogBatchClass implements Database.Batchable<SObject>
             return;
         }
         Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-        mail.setToAddresses(new String[]{'ops-team@example.com'});
+        mail.setToAddresses(new String[]{'Shubham.m@etg.digital'});
         mail.setSubject('RCA ProdCatalog Batch Errors – ' + 
                         Datetime.now().format('yyyy-MM-dd HH:mm'));
         mail.setPlainTextBody(
