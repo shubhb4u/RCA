@@ -15,7 +15,7 @@ global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database
 
         String baseQuery =
             'SELECT Id, Name, ProductCode, IsActive, SBQQ__ConfigurationType__c, ' +
-            'SBQQ__Component__c, StockKeepingUnit, ' +
+            'SBQQ__Component__c, StockKeepingUnit, RecordTypeId, ' +
             '(SELECT Id, SBQQ__OptionalSKU__c, SBQQ__Number__c, SBQQ__Selected__c, ' +
             'SBQQ__Required__c, SBQQ__Quantity__c, SBQQ__Feature__c, SBQQ__Feature__r.Name, ' +
             'SBQQ__QuantityEditable__c, SBQQ__MinQuantity__c, SBQQ__MaxQuantity__c, ' +
@@ -33,65 +33,162 @@ global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database
     global void execute(Database.BatchableContext bc, List<Product2> scope) {
 
         try {
-            initializeConfigIds();
-
-            Map<Id, List<SBQQ__ProductFeature__c>> featureMap = RCA_ProductCatalogHelper.fetchFeatures(scope);
-            Map<Id, List<SBQQ__ProductOption__c>> optionMap = RCA_ProductCatalogHelper.fetchOptions(scope);
-
             List<Product2> newProducts = new List<Product2>();
             List<Product2> updatedProducts = new List<Product2>();
 
-            Map<Id, Product2> origToNew = buildBundlesAndProducts(scope, featureMap, optionMap, newProducts, updatedProducts);
+            //1. Initialize default catalog/ categories and default relationship type -
+            initializeConfigIds();
 
+            //2. Prepare mapping ofC CPQ products with their Features and Options to be used later -
+            Map<Id, List<SBQQ__ProductFeature__c>> featureMap = RCA_ProductCatalogHelper.fetchFeatures(scope);
+            Map<Id, List<SBQQ__ProductOption__c>> optionMap = RCA_ProductCatalogHelper.fetchOptions(scope);
+
+            Map<Id, Product2> origToNew = RCA_ProductCatalogHelper.buildProducts(scope, featureMap, optionMap, newProducts, updatedProducts);
+            
+            //.3 Insert new bundles - 
             if (!newProducts.isEmpty()) {
                 Database.SaveResult[] insertResults = Database.insert(newProducts, false);
                 for (Integer i = 0; i < insertResults.size(); i++) {
                     if (!insertResults[i].isSuccess()) {
-                        errorMessages.add('Insert failed for Product: ' + newProducts[i].Name +
-                                          ' - ' + insertResults[i].getErrors()[0].getMessage());
+                        Product2 failedProduct = newProducts[i];
+                        String errorMsg = String.format(
+                            'Product insert failed:\n' +
+                            '  Name: {0}\n' +
+                            '  ProductCode: {1}\n' +
+                            '  SKU: {2}\n' +
+                            '  Error: {3}\n' +
+                            '  Fields: {4}',
+                            new String[]{
+                                failedProduct.Name,
+                                failedProduct.ProductCode,
+                                failedProduct.StockKeepingUnit,
+                                insertResults[i].getErrors()[0].getMessage(),
+                                String.join(insertResults[i].getErrors()[0].getFields(), ', ')
+                            }
+                        );
+                        errorMessages.add(errorMsg);
                     }
                 }
             }
             
+            //4. Update existing products -
             if (!updatedProducts.isEmpty()) {
                 Database.SaveResult[] updateResults = Database.update(updatedProducts, false);
                 for (Integer i = 0; i < updateResults.size(); i++) {
                     if (!updateResults[i].isSuccess()) {
-                        errorMessages.add('Update failed for Product: ' + updatedProducts[i].Name +
-                                          ' - ' + updateResults[i].getErrors()[0].getMessage());
+                        Product2 failedProduct = updatedProducts[i];
+                        String errorMsg = String.format(
+                            'Product update failed:\n' +
+                            '  ID: {0}\n' +
+                            '  Name: {1}\n' +
+                            '  ProductCode: {2}\n' +
+                            '  Error: {3}\n' +
+                            '  Fields: {4}',
+                            new String[]{
+                                failedProduct.Id,
+                                failedProduct.Name,
+                                failedProduct.ProductCode,
+                                updateResults[i].getErrors()[0].getMessage(),
+                                String.join(updateResults[i].getErrors()[0].getFields(), ', ')
+                            }
+                        );
+                        errorMessages.add(errorMsg);
+                    }
+                }
+            }
+
+
+            //5. Assign categories
+            List<ProductCategoryProduct> categoryList = RCA_ProductCatalogHelper.assignCategory(origToNew.values(), defaultCategoryId);
+            if (!categoryList.isEmpty()) {
+                Database.SaveResult[] categoryResults = Database.insert(categoryList, false);
+                for (Integer i = 0; i < categoryResults.size(); i++) {
+                    if (!categoryResults[i].isSuccess()) {
+                        ProductCategoryProduct failedAssignment = categoryList[i];
+                        String errorMsg = String.format(
+                            'Category assignment failed:\n' +
+                            '  Product ID: {0}\n' +
+                            '  Category ID: {1}\n' +
+                            '  Error: {2}\n' +
+                            '  Fields: {3}',
+                            new String[] {
+                                failedAssignment.ProductId,
+                                failedAssignment.ProductCategoryId,
+                                categoryResults[i].getErrors()[0].getMessage(),
+                                String.join(categoryResults[i].getErrors()[0].getFields(), ', ')
+                            }
+                        );
+                        errorMessages.add(errorMsg);
                     }
                 }
             }
             
-
-            assignDefaultCategory(origToNew.values());
-
-            List<ProductComponentGroup> groups = buildComponentGroups(origToNew, featureMap);
+            //6. Create new ProductComponentGroups for new Products (Product Features)
+            List<ProductComponentGroup> groups = RCA_ProductCatalogHelper.buildComponentGroups(origToNew, featureMap);
             if (!groups.isEmpty()) {
                 Database.SaveResult[] groupResults = Database.insert(groups, false);
                 for (Integer i = 0; i < groupResults.size(); i++) {
                     if (!groupResults[i].isSuccess()) {
-                        errorMessages.add('Insert failed for Component Group: ' + groups[i].Name +
-                                          ' - ' + groupResults[i].getErrors()[0].getMessage());
+                        ProductComponentGroup failedGroup = groups[i];
+                        String errorMsg = String.format(
+                            'Component Group insert failed:\n' +
+                            '  Parent Product ID: {0}\n' +
+                            '  Name: {1}\n' +
+                            '  Min Components: {2}\n' +
+                            '  Max Components: {3}\n' +
+                            '  Sequence: {4}\n' +
+                            '  Error: {5}\n' +
+                            '  Fields: {6}',
+                            new String[]{
+                                failedGroup.ParentProductId,
+                                failedGroup.Name,
+                                String.valueOf(failedGroup.MinBundleComponents),
+                                String.valueOf(failedGroup.MaxBundleComponents),
+                                String.valueOf(failedGroup.Sequence),
+                                groupResults[i].getErrors()[0].getMessage(),
+                                String.join(groupResults[i].getErrors()[0].getFields(), ', ')
+                            }
+                        );
+                        errorMessages.add(errorMsg);
                     }
                 }
             }
 
-            List<ProductRelatedComponent> relatedComponents = buildRelatedComponents(origToNew, optionMap, groups);
+            //6. Create new ProductRelatedComponent for new Products (Product Options)
+            List<ProductRelatedComponent> relatedComponents = RCA_ProductCatalogHelper.buildRelatedComponents(origToNew, optionMap, groups, relationshipTypeId);
             if (!relatedComponents.isEmpty()) {
                 Database.SaveResult[] relCompResults = Database.insert(relatedComponents, false);
                 for (Integer i = 0; i < relCompResults.size(); i++) {
                     if (!relCompResults[i].isSuccess()) {
-                        errorMessages.add('Insert failed for Related Component - ' +
-                                          relCompResults[i].getErrors()[0].getMessage());
+                        ProductRelatedComponent relComp = relatedComponents[i];
+                        String errorMsg = String.format(
+                            'Related Component insert failed:\n' +
+                            '  Parent Product ID: {0}\n' +
+                            '  Child Product ID: {1}\n' +
+                            '  Group ID: {2}\n' +
+                            '  Relationship Type ID: {3}\n' +
+                            '  Error: {4}\n' +
+                            '  Fields: {5}',
+                            new String[]{
+                                relComp.ParentProductId,
+                                relComp.ChildProductId,
+                                relComp.ProductComponentGroupId,
+                                relComp.ProductRelationshipTypeId,
+                                relCompResults[i].getErrors()[0].getMessage(),
+                                String.join(relCompResults[i].getErrors()[0].getFields(), ', ')
+                            }
+                        );
+                        errorMessages.add(errorMsg);
                     }
                 }
             }
-
+            
+            //7. Update processed CPQ records as true - 
             markProductsProcessed(scope);
 
         } catch (Exception ex) {
-            errorMessages.add('Batch execution error: ' + ex.getMessage());
+            errorMessages.add('Batch execution error: ' + ex.getMessage() + 
+                        '\nStack Trace: ' + ex.getStackTraceString());
         }
     }
 
@@ -103,56 +200,43 @@ global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database
 
     // Helper methods
     private void initializeConfigIds() {
-        if (recordTypeId == null) recordTypeId = RCA_ProductCatalogHelper.getRecordTypeId();
+        
         if (defaultCategoryId == null) defaultCategoryId = RCA_ProductCatalogHelper.getCategoryId();
         if (relationshipTypeId == null) relationshipTypeId = RCA_ProductCatalogHelper.getRelationshipTypeId();
     }
-
-    private Map<Id, Product2> buildBundlesAndProducts(
-        List<Product2> scope,
-        Map<Id, List<SBQQ__ProductFeature__c>> featureMap,
-        Map<Id, List<SBQQ__ProductOption__c>> optionMap,
-        List<Product2> newProducts,
-        List<Product2> updatedProducts
-    ) {
-        return RCA_ProductCatalogHelper.buildProducts(scope, featureMap, optionMap, newProducts, updatedProducts, recordTypeId);
-    }
-
-    private void assignDefaultCategory(Iterable<Product2> products) {
-        Set<Id> productIds = new Set<Id>();
-        for (Product2 p : products) {
-            if (p.Id != null) productIds.add(p.Id);
-        }
-        RCA_ProductCatalogHelper.assignCategory(productIds, defaultCategoryId);
-    }
-
-    private List<ProductComponentGroup> buildComponentGroups(
-        Map<Id, Product2> origToNew,
-        Map<Id, List<SBQQ__ProductFeature__c>> featureMap
-    ) {
-        return RCA_ProductCatalogHelper.buildComponentGroups(origToNew, featureMap);
-    }
-
-    private List<ProductRelatedComponent> buildRelatedComponents(
-        Map<Id, Product2> origToNew,
-        Map<Id, List<SBQQ__ProductOption__c>> optionMap,
-        List<ProductComponentGroup> groups
-    ) {
-        return RCA_ProductCatalogHelper.buildRelatedComponents(origToNew, optionMap, groups, relationshipTypeId);
-    }
+ 
 
     private void markProductsProcessed(List<Product2> processedProducts) {
+        List<Product2> toUpdate = new List<Product2>();
         for (Product2 p : processedProducts) {
             p.IsProcessed__c = true;
+            toUpdate.add(p);
         }
-        Database.SaveResult[] updateResults = Database.update(processedProducts, false);
+        
+        Database.SaveResult[] updateResults = Database.update(toUpdate, false);
         for (Integer i = 0; i < updateResults.size(); i++) {
             if (!updateResults[i].isSuccess()) {
-                errorMessages.add('Marking as processed failed for: ' + processedProducts[i].Name +
-                                ' - ' + updateResults[i].getErrors()[0].getMessage());
+                Product2 failedProduct = toUpdate[i];
+                String errorMsg = String.format(
+                    'Mark processed failed:\n' +
+                    '  Product ID: {0}\n' +
+                    '  Name: {1}\n' +
+                    '  ProductCode: {2}\n' +
+                    '  IsProcessed: {3}\n' +
+                    '  Error: {4}\n' +
+                    '  Fields: {5}',
+                    new String[]{
+                        failedProduct.Id,
+                        failedProduct.Name,
+                        failedProduct.ProductCode,
+                        String.valueOf(failedProduct.IsProcessed__c),
+                        updateResults[i].getErrors()[0].getMessage(),
+                        String.join(updateResults[i].getErrors()[0].getFields(), ', ')
+                    }
+                );
+                errorMessages.add(errorMsg);
             }
         }
-
     }
 
     private void sendErrorNotification() {
@@ -163,3 +247,5 @@ global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database
         Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
     }
 }
+
+

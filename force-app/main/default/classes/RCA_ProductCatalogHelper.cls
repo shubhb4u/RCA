@@ -1,11 +1,12 @@
 public class RCA_ProductCatalogHelper {
 
-    private static final String DEFAULT_CATEGORY_NAME = 'default category';
-    private static final String COMMERCIAL_RT_NAME    = 'Commercial';
-    private static final String REL_TYPE_NAME         = 'Bundle to Bundle Component Relationship';
+    private static final String DEFAULT_CATEGORY_NAME = 'Default category';
+    private static final String REL_TYPE              = 'Bundle';
+    private static final String REL_TYPE_NAME         = 'BundleComponent';
     private static final String COMMON_GROUP_NAME     = 'Common';
     private static final Integer DEFAULT_MAX_COMPONENTS = 5;
 
+    // Create a map of CPQ products and their child Product Features - 
     public static Map<Id, List<SBQQ__ProductFeature__c>> fetchFeatures(List<Product2> products) {
         Map<Id, List<SBQQ__ProductFeature__c>> featureMap = new Map<Id, List<SBQQ__ProductFeature__c>>();
         for (Product2 p : products) {
@@ -16,6 +17,7 @@ public class RCA_ProductCatalogHelper {
         return featureMap;
     }
 
+    // Create a map of CPQ products and their child Product Options - 
     public static Map<Id, List<SBQQ__ProductOption__c>> fetchOptions(List<Product2> products) {
         Map<Id, List<SBQQ__ProductOption__c>> optionMap = new Map<Id, List<SBQQ__ProductOption__c>>();
         for (Product2 p : products) {
@@ -26,13 +28,13 @@ public class RCA_ProductCatalogHelper {
         return optionMap;
     }
 
+    //3. Create New bundle products and update existing CPQ products with relevant data - 
     public static Map<Id, Product2> buildProducts(
         List<Product2> scope,
         Map<Id, List<SBQQ__ProductFeature__c>> featureMap,
         Map<Id, List<SBQQ__ProductOption__c>> optionMap,
         List<Product2> newProducts,
-        List<Product2> updatedProducts,
-        Id recordTypeId
+        List<Product2> updatedProducts
     ) {
         Map<Id, Product2> originalToNewMap = new Map<Id, Product2>();
 
@@ -49,63 +51,97 @@ public class RCA_ProductCatalogHelper {
                 ? baseName.substring(0,3).toUpperCase()
                 : baseName.toUpperCase();
 
-            if (hasFeatures || hasOptions) {
-                // Create a new bundle product
-                String skuBase = String.isBlank(product.StockKeepingUnit) ? prefix : product.StockKeepingUnit;
-                Product2 bundle = new Product2(
-                    Name = product.Name,
-                    ProductCode = product.ProductCode,
-                    IsActive = product.IsActive,
-                    ConfigureDuringSale = product.SBQQ__ConfigurationType__c,
-                    Type = 'Bundle',
-                    RecordTypeId = recordTypeId,
-                    StockKeepingUnit = skuBase + ' - Bundle'
-                );
+            //Will be enabled late Mid June - Update existing CPQ products with RCA relevant fields instead of creating new bundles
+            if(!Schema.SObjectType.Product2.fields.Type.isUpdateable()){
+                System.debug('Check Type field is editability -->> '+ Schema.SObjectType.Product2.fields.Type.isUpdateable());
 
-                if (String.isBlank(product.StockKeepingUnit)) {
-                    product.StockKeepingUnit = prefix + ' - CPQ Bundle';
+                if (hasFeatures || hasOptions) {
+
+                    // Create a new bundle product - 
+                    String skuBase = String.isBlank(product.StockKeepingUnit) ? prefix : product.StockKeepingUnit;
+                    Product2 bundle = new Product2(
+                        Name = product.Name,
+                        ProductCode = product.ProductCode,
+                        IsActive = product.IsActive,
+                        ConfigureDuringSale = product.SBQQ__ConfigurationType__c,
+                        Type = 'Bundle',
+                        StockKeepingUnit = skuBase + ' - Bundle'
+                    );
+    
+                    if (String.isBlank(product.StockKeepingUnit)) {
+                        product.StockKeepingUnit = prefix + ' - CPQ Bundle';
+                    }
+    
+                    newProducts.add(bundle);
+                    updatedProducts.add(product);
+                    originalToNewMap.put(product.Id, bundle);
+    
+                } else {
+
+                    // Update product as standalone - 
+                    product.ConfigureDuringSale = product.SBQQ__ConfigurationType__c;
+                    product.IsSoldOnlyWithOtherProds = product.SBQQ__Component__c;
+                    if (String.isBlank(product.StockKeepingUnit)) {
+                        product.StockKeepingUnit = prefix + ' - Standalone';
+                    }
+                    updatedProducts.add(product);
                 }
+            }else{
 
-                newProducts.add(bundle);
-                updatedProducts.add(product);
-                originalToNewMap.put(product.Id, bundle);
-
-            } else {
-                // Update product as standalone
-                product.ConfigureDuringSale = product.SBQQ__ConfigurationType__c;
-                product.IsSoldOnlyWithOtherProds = product.SBQQ__Component__c;
-                product.RecordTypeId = recordTypeId;
-                if (String.isBlank(product.StockKeepingUnit)) {
-                    product.StockKeepingUnit = prefix + ' - Standalone';
+                if (hasFeatures || hasOptions) {
+                    // Update CPQ products with required RCA product fields - 
+                    product.ConfigureDuringSale = product.SBQQ__ConfigurationType__c;
+                    product.IsSoldOnlyWithOtherProds = product.SBQQ__Component__c;
+                    product.Type = 'Bundle';
+                    updatedProducts.add(product);
                 }
-                updatedProducts.add(product);
             }
         }
         return originalToNewMap;
     }
 
-    public static void assignCategory(Set<Id> productIds, Id categoryId) {
-
-        if (categoryId == null || productIds.isEmpty()) return;
-
-        Set<Id> existingProductIds = new Set<Id>();
-        for (ProductCategoryProduct pcp : [SELECT ProductId FROM ProductCategoryProduct
-                                            WHERE ProductCategoryId = :categoryId
-                                            AND ProductId IN :productIds]) {
-            existingProductIds.add(pcp.ProductId);
-        }
-
+    //5. Assign default categories to new products and update existing products - 
+    public static List<ProductCategoryProduct> assignCategory(List<Product2> products, Id categoryId) {
         List<ProductCategoryProduct> toInsert = new List<ProductCategoryProduct>();
-        for (Id productId : productIds) {
-            if (!existingProductIds.contains(productId)) {
-                toInsert.add(new ProductCategoryProduct(ProductId = productId, ProductCategoryId = categoryId));
+        
+        if (products == null || products.isEmpty() || categoryId == null) {
+            return toInsert;
+        }
+
+        Set<Id> productIds = new Set<Id>();
+        for (Product2 p : products) {
+            if (p.Id != null) productIds.add(p.Id);
+        }
+
+        if (productIds.isEmpty()) return toInsert;
+
+        try {
+            Set<Id> existingProductIds = new Set<Id>();
+            for (ProductCategoryProduct pcp : [
+                SELECT ProductId 
+                FROM ProductCategoryProduct 
+                WHERE ProductCategoryId = :categoryId 
+                AND ProductId IN :productIds
+            ]) {
+                existingProductIds.add(pcp.ProductId);
             }
+
+            for (Id productId : productIds) {
+                if (!existingProductIds.contains(productId)) {
+                    toInsert.add(new ProductCategoryProduct(
+                        ProductId = productId, 
+                        ProductCategoryId = categoryId
+                    ));
+                }
+            }
+        } catch (Exception e) {
+            System.debug('Error checking existing category assignments: ' + e.getMessage());
         }
-        if (!toInsert.isEmpty()) {
-            Database.insert(toInsert, false);
-        }
+        
+        return toInsert;
     }
 
+    //6. Create ProductComponentGroups for new products - 
     public static List<ProductComponentGroup> buildComponentGroups(Map<Id, Product2> originalToNewMap,
         Map<Id, List<SBQQ__ProductFeature__c>> featureMap
     ) {
@@ -143,6 +179,7 @@ public class RCA_ProductCatalogHelper {
         return groups;
     }
 
+    //7. Create ProductRelatedComponents for new products - 
     public static List<ProductRelatedComponent> buildRelatedComponents(
         Map<Id, Product2> originalToNewMap,
         Map<Id, List<SBQQ__ProductOption__c>> optionMap,
@@ -156,6 +193,7 @@ public class RCA_ProductCatalogHelper {
 
         List<ProductRelatedComponent> relatedComponents = new List<ProductRelatedComponent>();
         for (Id origId : originalToNewMap.keySet()) {
+
             Id parentProductId = originalToNewMap.get(origId).Id;
             List<SBQQ__ProductOption__c> options = optionMap.get(origId);
 
@@ -187,18 +225,16 @@ public class RCA_ProductCatalogHelper {
         return relatedComponents;
     }
 
+    //Get default category Id - 
     public static Id getCategoryId() {
         ProductCategory category = [SELECT Id FROM ProductCategory WHERE Name = :DEFAULT_CATEGORY_NAME LIMIT 1];
         return category != null ? category.Id : null;
     }
 
-    public static Id getRecordTypeId() {
-        RecordType rt = [SELECT Id FROM RecordType WHERE Name = :COMMERCIAL_RT_NAME AND SObjectType = 'Product2' LIMIT 1];
-        return rt != null ? rt.Id : null;
-    }
-
+    //get default ProductRelationshipType Id - 
     public static Id getRelationshipTypeId() {
-        ProductRelationshipType rel = [SELECT Id FROM ProductRelationshipType WHERE Name = :REL_TYPE_NAME LIMIT 1];
+        ProductRelationshipType rel = [SELECT Id,MainProductRoleCat, AssociatedProductRoleCat  FROM ProductRelationshipType WHERE AssociatedProductRoleCat =:REL_TYPE_NAME  AND MainProductRoleCat = :REL_TYPE LIMIT 1];
         return rel != null ? rel.Id : null;
     }
+
 }
