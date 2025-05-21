@@ -237,4 +237,31 @@ public class RCA_ProductCatalogHelper {
         return rel != null ? rel.Id : null;
     }
 
+    public static String formatDmlError(String context, SObject record, Database.Error error, List<String> fields) {
+        List<String> parts = new List<String>();
+        Map<String, Object> fieldMap = record.getPopulatedFieldsAsMap();
+        
+        // Add field values
+        for(String field : fields) {
+            Object value = fieldMap.containsKey(field) ? fieldMap.get(field) : 'N/A';
+            parts.add(field);
+            parts.add(String.valueOf(value));
+        }
+        
+        // Add error details
+        parts.add(error.getMessage());
+        parts.add(String.join(error.getFields(), ', '));
+        
+        // Build template dynamically
+        String template = context + ':\n';
+        Integer index = 0;
+        for(Integer i = 0; i < fields.size(); i++) {
+            template += '  {0}: {1}\n'.replace('0', String.valueOf(index++)).replace('1', String.valueOf(index++));
+        }
+        template += '  Error: {' + index++ + '}\n' +
+                    '  Fields: {' + index++ + '}';
+        
+        return String.format(template, parts);
+    }
 }
+
