@@ -3,13 +3,13 @@ public class RCA_ProductCatalogHelper {
     private static final String DEFAULT_CATEGORY_NAME = 'Default category';
     private static final String REL_TYPE              = 'Bundle';
     private static final String REL_TYPE_NAME         = 'BundleComponent';
-    private static final String COMMON_GROUP_NAME     = 'Common';
+    private static final String COMMON_GROUP_NAME     = 'Others';
     private static final Integer DEFAULT_MAX_COMPONENTS = 5;
 
     // Create a map of CPQ products and their child Product Features - 
-    public static Map<Id, List<SBQQ__ProductFeature__c>> fetchFeatures(List<Product2> products) {
+    public static Map<Id, List<SBQQ__ProductFeature__c>> fetchFeatures(List<Product2> CPQproducts) {
         Map<Id, List<SBQQ__ProductFeature__c>> featureMap = new Map<Id, List<SBQQ__ProductFeature__c>>();
-        for (Product2 p : products) {
+        for (Product2 p : CPQproducts) {
             featureMap.put(p.Id, p.SBQQ__Features__r != null
                 ? new List<SBQQ__ProductFeature__c>(p.SBQQ__Features__r)
                 : new List<SBQQ__ProductFeature__c>());
@@ -18,9 +18,9 @@ public class RCA_ProductCatalogHelper {
     }
 
     // Create a map of CPQ products and their child Product Options - 
-    public static Map<Id, List<SBQQ__ProductOption__c>> fetchOptions(List<Product2> products) {
+    public static Map<Id, List<SBQQ__ProductOption__c>> fetchOptions(List<Product2> CPQproducts) {
         Map<Id, List<SBQQ__ProductOption__c>> optionMap = new Map<Id, List<SBQQ__ProductOption__c>>();
-        for (Product2 p : products) {
+        for (Product2 p : CPQproducts) {
             optionMap.put(p.Id, p.SBQQ__Options__r != null
                 ? new List<SBQQ__ProductOption__c>(p.SBQQ__Options__r)
                 : new List<SBQQ__ProductOption__c>());
@@ -29,17 +29,16 @@ public class RCA_ProductCatalogHelper {
     }
 
     //3. Create New bundle products and update existing CPQ products with relevant data - 
-    public static Map<Id, Product2> buildProducts(
-        List<Product2> scope,
+    public static void buildProducts( List<Product2> CPQProductsList,
         Map<Id, List<SBQQ__ProductFeature__c>> featureMap,
         Map<Id, List<SBQQ__ProductOption__c>> optionMap,
         List<Product2> newProducts,
-        List<Product2> updatedProducts
-    ) {
-        Map<Id, Product2> originalToNewMap = new Map<Id, Product2>();
+        List<Product2> updatedProducts, 
+        Map<Id, Product2> origCPQToNewBundle) {
 
-        for (Product2 product : scope) {
+        for (Product2 product : CPQProductsList) {
 
+            //Get Features and Options from CPQ bundle products if they exist- 
             List<SBQQ__ProductFeature__c> features = featureMap.get(product.Id);
             List<SBQQ__ProductOption__c> options = optionMap.get(product.Id);
 
@@ -51,53 +50,46 @@ public class RCA_ProductCatalogHelper {
                 ? baseName.substring(0,3).toUpperCase()
                 : baseName.toUpperCase();
 
-            //Will be enabled late Mid June - Update existing CPQ products with RCA relevant fields instead of creating new bundles
-            if(!Schema.SObjectType.Product2.fields.Type.isUpdateable()){
-                System.debug('Check Type field is editability -->> '+ Schema.SObjectType.Product2.fields.Type.isUpdateable());
-
+                //If The CPQ product has either Features or Options, create a new bundle product -
                 if (hasFeatures || hasOptions) {
 
+                    String skuBase = String.isBlank(product.StockKeepingUnit) ? 
+                                                    prefix : product.StockKeepingUnit;
+                    
                     // Create a new bundle product - 
-                    String skuBase = String.isBlank(product.StockKeepingUnit) ? prefix : product.StockKeepingUnit;
                     Product2 bundle = new Product2(
                         Name = product.Name,
-                        ProductCode = product.ProductCode,
+                        ProductCode = product.ProductCode + ' - Bundle',
                         IsActive = product.IsActive,
                         ConfigureDuringSale = product.SBQQ__ConfigurationType__c,
                         Type = 'Bundle',
                         StockKeepingUnit = skuBase + ' - Bundle'
                     );
     
+                    //Check with Satish if we want to update old CPQ records if missing SKU?
                     if (String.isBlank(product.StockKeepingUnit)) {
                         product.StockKeepingUnit = prefix + ' - CPQ Bundle';
                     }
     
-                    newProducts.add(bundle);
-                    updatedProducts.add(product);
-                    originalToNewMap.put(product.Id, bundle);
+                    //Add new products to be inserted.
+                    newProducts.add(bundle); 
+
+                    // Create a map to link the original CPQ product with the new RCA bundle -
+                    origCPQToNewBundle.put(product.Id, bundle); 
     
                 } else {
 
-                    // Update product as standalone - 
+                    // Update Standalone CPQ products with relevant RCA fields -  
                     product.ConfigureDuringSale = product.SBQQ__ConfigurationType__c;
                     product.IsSoldOnlyWithOtherProds = product.SBQQ__Component__c;
+
+                    //Check with Satish if we want to update old CPQ records if missing SKU?
                     if (String.isBlank(product.StockKeepingUnit)) {
                         product.StockKeepingUnit = prefix + ' - Standalone';
                     }
                     updatedProducts.add(product);
                 }
-            }else{
-
-                if (hasFeatures || hasOptions) {
-                    // Update CPQ products with required RCA product fields - 
-                    product.ConfigureDuringSale = product.SBQQ__ConfigurationType__c;
-                    product.IsSoldOnlyWithOtherProds = product.SBQQ__Component__c;
-                    product.Type = 'Bundle';
-                    updatedProducts.add(product);
-                }
-            }
         }
-        return originalToNewMap;
     }
 
     //5. Assign default categories to new products and update existing products - 
@@ -149,7 +141,7 @@ public class RCA_ProductCatalogHelper {
         for (Id origId : originalToNewMap.keySet()) {
             Product2 newProd = originalToNewMap.get(origId);
 
-            // Add default 'Common' group
+            // Add default 'Others' group
             groups.add(new ProductComponentGroup(
                 ParentProductId = newProd.Id,
                 Name = COMMON_GROUP_NAME,
@@ -231,12 +223,13 @@ public class RCA_ProductCatalogHelper {
         return category != null ? category.Id : null;
     }
 
-    //get default ProductRelationshipType Id - 
+    //Get default ProductRelationshipType Id - 
     public static Id getRelationshipTypeId() {
         ProductRelationshipType rel = [SELECT Id,MainProductRoleCat, AssociatedProductRoleCat  FROM ProductRelationshipType WHERE AssociatedProductRoleCat =:REL_TYPE_NAME  AND MainProductRoleCat = :REL_TYPE LIMIT 1];
         return rel != null ? rel.Id : null;
     }
 
+    //Create a message to include failed records details -
     public static String formatDmlError(String context, SObject record, Database.Error error, List<String> fields) {
         List<String> parts = new List<String>();
         Map<String, Object> fieldMap = record.getPopulatedFieldsAsMap();
@@ -264,4 +257,3 @@ public class RCA_ProductCatalogHelper {
         return String.format(template, parts);
     }
 }
-

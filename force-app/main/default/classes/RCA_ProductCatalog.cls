@@ -1,19 +1,20 @@
 global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database.Stateful {
     
-    @TestVisible
     private List<String> errorMessages = new List<String>();
     private Id defaultCategoryId;
-    private Id recordTypeId;
     private Id relationshipTypeId;
     private List<Id> productIds;
 
     global RCA_ProductCatalog() {}
+
+    //Parameterized Constructor to execute batch explicitly as required - 
     global RCA_ProductCatalog(List<Id> productIds) {
         this.productIds = productIds;
     }
 
     global Database.QueryLocator start(Database.BatchableContext bc) {
 
+        //Base query to retrieve all the CPQ Product records - 
         String baseQuery =
             'SELECT Id, Name, ProductCode, IsActive, SBQQ__ConfigurationType__c, ' +
             'SBQQ__Component__c, StockKeepingUnit, RecordTypeId, ' +
@@ -31,46 +32,74 @@ global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database
         return Database.getQueryLocator(baseQuery);
     }
 
-    global void execute(Database.BatchableContext bc, List<Product2> scope) {
+    global void execute(Database.BatchableContext bc, List<Product2> CPQProductsList) {
 
-        try {
-            List<Product2> newProducts = new List<Product2>();
-            List<Product2> updatedProducts = new List<Product2>();
+            
+            List<Product2> newProducts = new List<Product2>(); 
+            List<Product2> updatedProducts = new List<Product2>(); 
+            //To store original CPQ Bundle product Ids and new RCA Bundle products created - 
+            Map<Id, Product2> origCPQToNewBundle = new Map<Id, Product2>(); 
 
-            //1. Initialize default catalog/ categories and default relationship type -
+            //1. Initialize default categories and default relationship type -
             initializeConfigIds();
 
-            //2. Prepare mapping ofC CPQ products with their Features and Options to be used later -
-            Map<Id, List<SBQQ__ProductFeature__c>> featureMap = RCA_ProductCatalogHelper.fetchFeatures(scope);
-            Map<Id, List<SBQQ__ProductOption__c>> optionMap = RCA_ProductCatalogHelper.fetchOptions(scope);
-
-            Map<Id, Product2> origToNew = RCA_ProductCatalogHelper.buildProducts(scope, featureMap, optionMap, newProducts, updatedProducts);
+            //2. Prepare map of CPQ products with their Features and Options to be used later -
+            Map<Id, List<SBQQ__ProductFeature__c>> featureMap = RCA_ProductCatalogHelper.fetchFeatures(CPQProductsList);
+            Map<Id, List<SBQQ__ProductOption__c>> optionMap = RCA_ProductCatalogHelper.fetchOptions(CPQProductsList);
             
-            //.3 Insert new bundles - 
+            //4. Create newProducts, updatedProducts and create a Map <CPQProduct Id, New Bundles> -
+            RCA_ProductCatalogHelper.buildProducts(CPQProductsList, featureMap, optionMap, newProducts, updatedProducts, origCPQToNewBundle);
+
+            //5. Insert new bundle products
             if (!newProducts.isEmpty()) {
-                Database.SaveResult[] insertResults = Database.insert(newProducts, false);
-                handleDmlErrors(
-                    newProducts,
-                    insertResults,
-                    'Product insert failed',
-                    new List<String>{'Name', 'ProductCode', 'StockKeepingUnit'}
-                );
+
+                try {
+                    insert newProducts;
+                } catch (DmlException ex) {
+
+                    //Log only the records that failed - 
+                    for (Integer i = 0; i < e.getNumDml(); i++) {
+                        RCA_BatchExceptionLogger.logException(
+                            'RCA_ProductCatalog','Insert Product failed', 
+                            newProducts[i].StockKeepingUnit, ex
+                        );
+                    }
+                }
+            }
+
+            //5. Insert new bundle products
+            if (!updatedProducts.isEmpty()) {
+
+                try {
+                    update updatedProducts;
+                } catch (DmlException ex) {
+                    //Log only the records that failed - 
+                    for (Integer i = 0; i < e.getNumDml(); i++) {
+                        RCA_BatchExceptionLogger.logException(
+                            'RCA_ProductCatalog','Update Product failed', 
+                            updatedProducts[i].StockKeepingUnit, ex
+                        );
+                    }
+                }
+            }
+
+            //.6 Insert new bundles - 
+            if (!updatedProducts.isEmpty()) {
+                try {
+                    update updatedProducts;
+                } catch (DmlException e) {
+                    for (Integer i = 0; i < updatedProducts.size(); i++) {
+                        RCA_BatchExceptionLogger.logException(
+                            'RCA_ProductCatalog', 'Update Product', 
+                            updatedProducts[i].StockKeepingUnit, e
+                        );
+                    }
+                }
             }
             
-            //4. Update existing products -
-            if (!updatedProducts.isEmpty()) {
-                Database.SaveResult[] updateResults = Database.update(updatedProducts, false);
-                handleDmlErrors(
-                    updatedProducts,
-                    updateResults,
-                    'Product update failed',
-                    new List<String>{'Id', 'Name', 'ProductCode'}
-                );
-            }
 
-
-            //5. Assign categories
-            List<ProductCategoryProduct> categoryList = RCA_ProductCatalogHelper.assignCategory(origToNew.values(), defaultCategoryId);
+            //5. Assign categories to both old CPQ records as well as new RCA products
+            List<ProductCategoryProduct> categoryList = RCA_ProductCatalogHelper.assignCategory(origCPQToNewBundle.values(), defaultCategoryId);
             if (!categoryList.isEmpty()) {
                 Database.SaveResult[] categoryResults = Database.insert(categoryList, false);
                 handleDmlErrors(
@@ -82,7 +111,7 @@ global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database
             }
             
             //6. Create new ProductComponentGroups for new Products (Product Features)
-            List<ProductComponentGroup> groups = RCA_ProductCatalogHelper.buildComponentGroups(origToNew, featureMap);
+            List<ProductComponentGroup> groups = RCA_ProductCatalogHelper.buildComponentGroups(origCPQToNewBundle, featureMap);
             if (!groups.isEmpty()) {
                 Database.SaveResult[] groupResults = Database.insert(groups, false);
                 handleDmlErrors(
@@ -94,7 +123,7 @@ global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database
             }
 
             //6. Create new ProductRelatedComponent for new Products (Product Options)
-            List<ProductRelatedComponent> relatedComponents = RCA_ProductCatalogHelper.buildRelatedComponents(origToNew, optionMap, groups, relationshipTypeId);
+            List<ProductRelatedComponent> relatedComponents = RCA_ProductCatalogHelper.buildRelatedComponents(origCPQToNewBundle, optionMap, groups, relationshipTypeId);
             if (!relatedComponents.isEmpty()) {
                 Database.SaveResult[] relCompResults = Database.insert(relatedComponents, false);
                 handleDmlErrors(
@@ -106,12 +135,8 @@ global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database
             }
             
             //7. Update processed CPQ records as true - 
-            markProductsProcessed(scope);
+            markProductsProcessed(CPQProductsList);
 
-        } catch (Exception ex) {
-            errorMessages.add('Batch execution error: ' + ex.getMessage() + 
-                        '\nStack Trace: ' + ex.getStackTraceString());
-        }
     }
 
     global void finish(Database.BatchableContext bc) {
@@ -120,7 +145,6 @@ global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database
         }
     }
 
-    // Helper methods
     private void initializeConfigIds() {
         
         if (defaultCategoryId == null) defaultCategoryId = RCA_ProductCatalogHelper.getCategoryId();
@@ -128,6 +152,7 @@ global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database
     }
  
 
+    //Set IsProcessed__c to true once the products are processed - 
     private void markProductsProcessed(List<Product2> processedProducts) {
         List<Product2> toUpdate = new List<Product2>();
         for (Product2 p : processedProducts) {
@@ -144,6 +169,7 @@ global class RCA_ProductCatalog implements Database.Batchable<SObject>, Database
         );
     }
 
+    //Create a meesage to include failed records details to be sent in an email 
     private void handleDmlErrors(List<SObject> records, Database.SaveResult[] results, String context, List<String> fieldNames) {
         for (Integer i = 0; i < results.size(); i++) {
             if (!results[i].isSuccess()) {
