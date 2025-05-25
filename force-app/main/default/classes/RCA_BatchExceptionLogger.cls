@@ -1,14 +1,28 @@
 public class RCA_BatchExceptionLogger {
 
-    public static void logException(String className,  String operation,
-        String recordIdentifier, Exception e ) {
-        
-            String errorDetail = 
-            'Class: ' + className + '\n' +
-            'Operation: ' + operation + '\n' +
-            'Record Identifier: ' + recordIdentifier + '\n' +
-            'Exception: ' + e.getMessage();
+    // Original method - formats a simple error string
+    public static String logException(String className, String errorContext,
+                                     String recordIdentifier, Object errorDetail) {
+        String message = className + ' | ' + errorContext + ' | ' + 
+                         recordIdentifier + ' | ' + errorDetail;
+        System.debug('EXCEPTION: ' + message);
+        return message;
+    }
 
-        System.debug(LoggingLevel.ERROR, errorDetail);
+    // Overloaded method to support record Id + Database.Error
+    public static String logException(String className, String errorContext,
+                                      Object recordIdentifier, Database.Error errorDetail) {
+        String errorMsg = (errorDetail != null) ? errorDetail.getMessage() : 'Unknown Error';
+        List<String> errorFields = (errorDetail != null && errorDetail.getFields() != null)
+            ? errorDetail.getFields()
+            : new List<String>();
+        String errorFieldStr = String.join(errorFields, ', ');
+
+        String message = className + ' | ' + errorContext + ' | ' +
+                         String.valueOf(recordIdentifier) + ' | ' +
+                         errorMsg + ' | Fields: ' + errorFieldStr;
+
+        System.debug('EXCEPTION: ' + message);
+        return message;
     }
 }
