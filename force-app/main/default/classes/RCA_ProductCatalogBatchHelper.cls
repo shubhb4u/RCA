@@ -4,9 +4,23 @@ public class RCA_ProductCatalogBatchHelper {
     private static final String REL_TYPE              = 'Bundle';
     private static final String REL_TYPE_NAME         = 'BundleComponent';
     private static final String COMMON_GROUP_NAME     = 'Others';
-    private static final Integer DEFAULT_MAX_COMPONENTS = 5;
+    private static final Integer DEFAULT_MAX_COMPONENTS = 0;
 
-    // 1. Fetch features from related child records (expecting loaded relationship)
+    // Fetch default config values used in component relationships and categories
+    public static Map<String, Id> initializeConfigIds() {
+
+        //Map of default Categories - 
+        Map<String, Id> config = new Map<String, Id>();
+        config.put('defaultCategoryId', [SELECT Id FROM ProductCategory WHERE Name = :DEFAULT_CATEGORY_NAME LIMIT 1].Id);
+
+        //Map of default RelationshipType Id -
+        config.put('relationshipTypeId', [SELECT Id FROM ProductRelationshipType WHERE AssociatedProductRoleCat = :REL_TYPE_NAME AND MainProductRoleCat = :REL_TYPE LIMIT 1].Id);
+
+        return config;
+    }
+    
+
+    // Fetch features from related child records (expecting loaded relationship)
     public static Map<Id, List<SBQQ__ProductFeature__c>> fetchFeatures(List<Product2> CPQproducts) {
         Map<Id, List<SBQQ__ProductFeature__c>> featureMap = new Map<Id, List<SBQQ__ProductFeature__c>>();
         for (Product2 p : CPQproducts) {
@@ -40,10 +54,9 @@ public class RCA_ProductCatalogBatchHelper {
         Map<Id, List<SBQQ__ProductOption__c>> optionMap,
         List<Product2> newProducts,
         List<Product2> updatedProducts,
-        Map<Id, Map<Id, Product2>> origCPQToNewBundleMap
+        Map<Id, Product2> origCPQToNewBundleMap
     ) {
         for (Product2 product : CPQProductsList) {
-
             List<SBQQ__ProductFeature__c> features = featureMap.get(product.Id);
             List<SBQQ__ProductOption__c> options = optionMap.get(product.Id);
 
@@ -51,9 +64,7 @@ public class RCA_ProductCatalogBatchHelper {
             Boolean hasOptions = options != null && !options.isEmpty();
 
             String baseName = String.isBlank(product.Name) ? 'PRD' : product.Name;
-            String prefix = baseName.length() >= 3
-                ? baseName.substring(0,3).toUpperCase()
-                : baseName.toUpperCase();
+            String prefix = baseName.length() >= 3 ? baseName.substring(0, 3).toUpperCase() : baseName.toUpperCase();
 
             if (hasFeatures || hasOptions) {
                 String skuBase = String.isBlank(product.StockKeepingUnit) ? prefix : product.StockKeepingUnit;
@@ -68,33 +79,51 @@ public class RCA_ProductCatalogBatchHelper {
                 );
 
                 newProducts.add(bundle);
-
-                // Map original product Id to a map with new bundle product(s)
-                if (!origCPQToNewBundleMap.containsKey(product.Id)) {
-                    origCPQToNewBundleMap.put(product.Id, new Map<Id, Product2>());
-                }
-                origCPQToNewBundleMap.get(product.Id).put(product.Id, bundle);
+                origCPQToNewBundleMap.put(product.Id, bundle);
             } else {
                 // Update standalone CPQ products with relevant RCA fields
-                product.SBQQ__ConfigurationType__c = product.SBQQ__ConfigurationType__c; // This line seems redundant but left as is
+                product.ConfigureDuringSale = product.SBQQ__ConfigurationType__c;
                 product.IsSoldOnlyWithOtherProds = product.SBQQ__Component__c;
                 updatedProducts.add(product);
             }
         }
     }
 
+    // Build map of newly inserted products by SKU for later reference
+    public static void buildNewProductsMap(List<Product2> allNewProducts, Map<String, Product2> insertedProductMap){
+
+        Set<String> skuSet = new Set<String>();
+        for (Product2 p : allNewProducts) {
+            if (p.StockKeepingUnit != null) {
+                skuSet.add(p.StockKeepingUnit);
+            }
+        }
+        
+        for (Product2 p : [SELECT Id, StockKeepingUnit FROM Product2 WHERE 
+                            StockKeepingUnit IN :skuSet]) {
+            insertedProductMap.put(p.StockKeepingUnit, p);
+        }
+    }
+
+
     /**
      * 4. Assign default categories to new and updated products, avoiding duplicates
      */
-    public static void assignCategory(
-        List<Product2> updatedProducts,
-        List<Product2> newProducts,
-        List<ProductCategoryProduct> toInsert,
-        Id categoryId) {
+    public static List<ProductCategoryProduct>  assignCategory(Id categoryId,
+                List<Product2> updatedProducts,  
+                Map<Id, Product2> allOrigCPQToNewBundleMap, 
+                Map<String, Product2> insertedProductMap) {
 
         List<Product2> allProducts = new List<Product2>();
         allProducts.addAll(updatedProducts);
-        allProducts.addAll(newProducts);
+
+        for (Product2 cpq : updatedProducts) {
+            Product2 bundle = allOrigCPQToNewBundleMap.get(cpq.Id);
+            if (bundle != null) {
+                Product2 resolved = insertedProductMap.get(bundle.StockKeepingUnit);
+                allProducts.add(resolved);
+            }
+        }
 
         Set<Id> productIds = new Set<Id>();
         for (Product2 p : allProducts) {
@@ -102,23 +131,22 @@ public class RCA_ProductCatalogBatchHelper {
         }
 
         Set<Id> existingProductIds = new Set<Id>();
-        for (ProductCategoryProduct pcp : [
-            SELECT ProductId 
-            FROM ProductCategoryProduct 
+        for (ProductCategoryProduct pcp : [SELECT ProductId FROM ProductCategoryProduct 
             WHERE ProductCategoryId = :categoryId 
-            AND ProductId IN :productIds
-        ]) {
-            existingProductIds.add(pcp.ProductId);
+            AND ProductId IN :productIds]) {
+                existingProductIds.add(pcp.ProductId);
         }
 
+        List<ProductCategoryProduct> links = new List< ProductCategoryProduct>();
         for (Product2 p : allProducts) {
             if (!existingProductIds.contains(p.Id)) {
-                toInsert.add(new ProductCategoryProduct(
+                links.add(new ProductCategoryProduct(
                     ProductId = p.Id,
                     ProductCategoryId = categoryId
                 ));
             }
         }
+        return links;
     }
 
     /**
@@ -126,12 +154,22 @@ public class RCA_ProductCatalogBatchHelper {
      * Accepts resolved bundles map: Map<Id (origProductId), Product2 (new bundle)>
      */
     public static List<ProductComponentGroup> buildComponentGroups(
-        Map<Id, Product2> originalToNewMap,
-        Map<Id, List<SBQQ__ProductFeature__c>> featureMap
+        Map<Id, Product2> resolvedOrigCPQToNewBundle,
+        Map<Id, List<SBQQ__ProductFeature__c>> featureMap,
+        Map<Id, Product2> allOrigCPQToNewBundleMap,
+        Map<String, Product2> insertedProductMap
+
     ) {
         List<ProductComponentGroup> groups = new List<ProductComponentGroup>();
-        for (Id origId : originalToNewMap.keySet()) {
-            Product2 newProd = originalToNewMap.get(origId);
+
+        for (Id origId : allOrigCPQToNewBundleMap.keySet()) {
+            Product2 p = allOrigCPQToNewBundleMap.get(origId);
+            Product2 resolved = insertedProductMap.get(p.StockKeepingUnit);
+            if (resolved != null) resolvedOrigCPQToNewBundle.put(origId, resolved);
+        }
+
+        for (Id origId : resolvedOrigCPQToNewBundle.keySet()) {
+            Product2 newProd = resolvedOrigCPQToNewBundle.get(origId);
 
             // Default group 'Others'
             groups.add(new ProductComponentGroup(
@@ -167,25 +205,31 @@ public class RCA_ProductCatalogBatchHelper {
      * Uses group Ids from created groups list, assumes groups are already inserted and have Ids
      */
     public static List<ProductRelatedComponent> buildRelatedComponents(
-        Map<Id, Product2> originalToNewMap,
+        Map<Id, Product2> resolvedOrigCPQOptionsToNewBundle,
         Map<Id, List<SBQQ__ProductOption__c>> optionMap,
         List<ProductComponentGroup> groups,
-        Id relationshipTypeId
+        Id relationshipTypeId,
+        Map<Id, Product2> allOrigCPQToNewBundleMap,
+        Map<String, Product2> insertedProductMap
     ) {
 
 
         List<ProductRelatedComponent> relatedComponents = new List<ProductRelatedComponent>();
+
+        for (Id origId : allOrigCPQToNewBundleMap.keySet()) {
+            Product2 p = allOrigCPQToNewBundleMap.get(origId);
+            Product2 resolved = insertedProductMap.get(p.StockKeepingUnit);
+            if (resolved != null) resolvedOrigCPQOptionsToNewBundle.put(origId, resolved);
+        }
 
         Map<String, Id> groupLookup = new Map<String, Id>();
         for (ProductComponentGroup grp : groups) {
             groupLookup.put(grp.ParentProductId + '_' + grp.Name, grp.Id);
         }
 
-        System.debug('originalToNewMap -->> '+ originalToNewMap);
+            for (Id origId : resolvedOrigCPQOptionsToNewBundle.keySet()) {
 
-            for (Id origId : originalToNewMap.keySet()) {
-
-                Id parentProductId = originalToNewMap.get(origId).Id;
+                Id parentProductId = resolvedOrigCPQOptionsToNewBundle.get(origId).Id;
                 List<SBQQ__ProductOption__c> options = optionMap.get(origId);
                 System.debug('options -->> '+ options);
     
@@ -220,31 +264,161 @@ public class RCA_ProductCatalogBatchHelper {
                         ProductRelationshipTypeId = relationshipTypeId
                     ));
                 }
-
-                System.debug('relatedComponents -->> '+ relatedComponents);
             }
-        
-        
         return relatedComponents;
     }
 
-    // 7. Get default category Id, returns null if not found (safe)
-    public static Id getCategoryId() {
-        List<ProductCategory> categories = [SELECT Id FROM ProductCategory WHERE Name = :DEFAULT_CATEGORY_NAME LIMIT 1];
-        return categories.isEmpty() ? null : categories[0].Id;
+    // Update Product2.IsProcessed__c = true
+    public static void markProductsProcessed(List<Product2> processedProducts, List<String> errorMessages, List<SObject> failedRecords) {
+        for (Product2 p : processedProducts) {
+            p.IsProcessed__c = true;
+        }
+        handleDmlOperation(processedProducts, 'update', 'Mark processed failed', errorMessages, failedRecords);
     }
 
-    // 8. Get default ProductRelationshipType Id, returns null if not found (safe)
-    public static Id getRelationshipTypeId() {
-        List<ProductRelationshipType> rels = [
-            SELECT Id, MainProductRoleCat, AssociatedProductRoleCat
-            FROM ProductRelationshipType
-            WHERE AssociatedProductRoleCat = :REL_TYPE_NAME
-            AND MainProductRoleCat = :REL_TYPE
-            LIMIT 1
+    // Generic method to handle insert/update DMLs with error logging
+    public static void handleDmlOperation(List<SObject> records, String operation, String errorContext, List<String> errorMessages, List<SObject> failedRecords) {
+        if (records.isEmpty()) return;
+    
+        try {
+            System.debug('records getting inserted -->> ' + records);
+            Database.SaveResult[] results = (operation == 'insert') ? Database.insert(records, false) : Database.update(records, false);
+    
+            for (Integer i = 0; i < results.size(); i++) {
+                if (!results[i].isSuccess()) {
+                    SObject record = records[i];
+                    String objectType = record.getSObjectType().getDescribe().getName();
+                    String fullErrorContext = errorContext + ' | Object: ' + objectType ;
+                    String CPQErrorRecord = getFailedRecordDetail(record);
+                    errorMessages.add(RCA_BatchExceptionLogger.logException(
+                        'RCA_ProductCatalogBatch', fullErrorContext,
+                        record, results[i].getErrors()[0], CPQErrorRecord
+                    ));
+                    
+                    failedRecords.add(record);
+                }
+            }
+        } catch (Exception e) {
+            errorMessages.add(errorContext + ' - Unexpected DML error: ' + e.getMessage());
+        }
+    }
+
+    //Add details in error email about CPQ records which might be the root cause of the error - 
+    public static String getFailedRecordDetail(SObject failedRecord) {
+        if (failedRecord == null) return '';
+    
+        String sObjectName = failedRecord.getSObjectType().getDescribe().getName();
+    
+        if (sObjectName == 'ProductRelatedComponent') {
+            String childProductId = (String)failedRecord.get('ChildProductId');
+            return 'Check SBQQ_ProductOption__c record with Optional SKU field: ' + childProductId;
+    
+        } else if (sObjectName == 'ProductComponentGroup') {
+            String groupName = (String)failedRecord.get('Name');
+            String parentProductId = (String)failedRecord.get('ParentProductId');
+    
+            if (groupName != 'Others') {
+                List<SBQQ__ProductFeature__c> featureList = [
+                    SELECT Id, SBQQ__ConfiguredSKU__c, SBQQ__ConfiguredSKU__r.StockKeepingUnit
+                    FROM SBQQ__ProductFeature__c
+                    WHERE Name = :groupName
+                    LIMIT 1
+                ];
+    
+                if (!featureList.isEmpty()) {
+                    SBQQ__ProductFeature__c feature = featureList[0];
+                    return 'Check SBQQ_ProductFeature__c with Name: ' + groupName +
+                           ', of Product: ' + feature.SBQQ__ConfiguredSKU__c +
+                           ', SKU: ' + feature.SBQQ__ConfiguredSKU__r.StockKeepingUnit;
+                } else {
+                    return 'SBQQ_ProductFeature__c not found for Name: ' + groupName;
+                }
+            } else {
+                return 'Check SBQQ_ProductOption__c record for optional SKU under group "Others".';
+            }
+        }
+        return 'Unknown record type: ' + sObjectName;
+    }
+    
+
+    //Rollback/Delete all failed parent records created in the  prcess to reduce manual deletion effort- 
+    public static void rollbackFailedCPQHierarchy(List<SObject> failedRecords, List<String> errorMessages) {
+        Set<Id> productIdsToDelete = new Set<Id>();
+    
+        // Collect ParentProductIds from failed records
+        for (SObject rec : failedRecords) {
+            if (rec.get('ParentProductId') != null) {
+                productIdsToDelete.add((Id)rec.get('ParentProductId'));
+            }
+        }
+    
+        try {
+            // Step 1: Delete component groups
+            if (!productIdsToDelete.isEmpty()) {
+                List<ProductComponentGroup> groupsToDelete = [
+                    SELECT Id FROM ProductComponentGroup WHERE ParentProductId IN :productIdsToDelete
+                ];
+
+                if (!groupsToDelete.isEmpty()) {
+                    delete groupsToDelete;
+                    System.debug('Deleted ProductComponentGroups: ' + groupsToDelete.size());
+                }
+            }
+    
+            // Step 2: Update parent CPQ products' IsProcessed__c field to false
+            getProductsToUpdate(productIdsToDelete);
+    
+            // Step 3: Delete new bundle products that failed or whose child records failed
+            if (!productIdsToDelete.isEmpty()) {
+                List<Product2> productsToDelete = [
+                    SELECT Id FROM Product2 WHERE Id IN :productIdsToDelete
+                ];
+                if (!productsToDelete.isEmpty()) {
+                    delete productsToDelete;
+                    System.debug('Deleted Product2 records: ' + productsToDelete.size());
+                }
+            }
+    
+        } catch (Exception e) {
+            errorMessages.add('Rollback deletion failed: ' + e.getMessage());
+            System.debug('Rollback exception: ' + e.getMessage());
+        }
+    }
+    
+    //Update isProcessed__c fields to 'False' for all the failed records - 
+    public static void getProductsToUpdate(Set<Id> productIdsToDelete) {
+        if (productIdsToDelete == null || productIdsToDelete.isEmpty()) return;
+    
+        List<Product2> updateOriginalProducts = new List<Product2>();
+        List<Product2> productsToUpdate = [
+            SELECT Id, StockKeepingUnit FROM Product2 WHERE Id IN :productIdsToDelete
         ];
-        return rels.isEmpty() ? null : rels[0].Id;
+    
+        Set<String> parentCPQProductsSKU = new Set<String>();
+        for (Product2 prd : productsToUpdate) {
+            if (prd.StockKeepingUnit != null) {
+                parentCPQProductsSKU.add(prd.StockKeepingUnit.replace(' - Bundle', ''));
+            }
+        }
+    
+        for (Product2 p : [SELECT Id, IsProcessed__c FROM Product2 WHERE StockKeepingUnit IN :parentCPQProductsSKU]) {
+            p.IsProcessed__c = false;
+            updateOriginalProducts.add(p);
+        }
+    
+        if (!updateOriginalProducts.isEmpty()) {
+            update updateOriginalProducts;
+            System.debug('Updated products IsProcessed__c to false: ' + updateOriginalProducts.size());
+        }
     }
-
+    
+    // Email errors to system administrator
+    public static void sendErrorNotification(List<String> errorMessages) {
+        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+        mail.setToAddresses(new String[] { 'Shubham.m@etg.digital' });
+        mail.setSubject('RCA Product Catalog Batch Process Errors');
+        mail.setPlainTextBody('RCA_ProductCatalogBatch class failed:\n' + String.join(errorMessages, '\n'));
+        Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
+    }
     
 }
