@@ -4,7 +4,7 @@ public class RCA_ProductCatalogBatchHelper {
     private static final String REL_TYPE              = 'Bundle';
     private static final String REL_TYPE_NAME         = 'BundleComponent';
     private static final String COMMON_GROUP_NAME     = 'Others';
-    private static final Integer DEFAULT_MAX_COMPONENTS = 0;
+    private static final Integer DEFAULT_MAX_COMPONENTS = 999;
 
     // Fetch default config values used in component relationships and categories
     public static Map<String, Id> initializeConfigIds() {
@@ -71,7 +71,7 @@ public class RCA_ProductCatalogBatchHelper {
 
                 Product2 bundle = new Product2(
                     Name = product.Name,
-                    ProductCode = product.ProductCode + ' - Bundle',
+                    ProductCode = (product.ProductCode != null ? product.ProductCode : '') + ' - Bundle',
                     IsActive = product.IsActive,
                     ConfigureDuringSale = product.SBQQ__ConfigurationType__c,
                     Type = 'Bundle',
@@ -157,8 +157,8 @@ public class RCA_ProductCatalogBatchHelper {
         Map<Id, Product2> resolvedOrigCPQToNewBundle,
         Map<Id, List<SBQQ__ProductFeature__c>> featureMap,
         Map<Id, Product2> allOrigCPQToNewBundleMap,
-        Map<String, Product2> insertedProductMap
-
+        Map<String, Product2> insertedProductMap,
+        Map<Id, List<SBQQ__ProductOption__c>> optionMap
     ) {
         List<ProductComponentGroup> groups = new List<ProductComponentGroup>();
 
@@ -169,16 +169,27 @@ public class RCA_ProductCatalogBatchHelper {
         }
 
         for (Id origId : resolvedOrigCPQToNewBundle.keySet()) {
+            Boolean hasIndependentOptions = false;
             Product2 newProd = resolvedOrigCPQToNewBundle.get(origId);
 
-            // Default group 'Others'
-            groups.add(new ProductComponentGroup(
-                ParentProductId = newProd.Id,
-                Name = COMMON_GROUP_NAME,
-                MinBundleComponents = 0,
-                MaxBundleComponents = DEFAULT_MAX_COMPONENTS,
-                Sequence = 1
-            ));
+            //Create common group others for this product if it has independent options i.e w/o any parent feature - 
+            for(SBQQ__ProductOption__c opt: optionMap.get(origId)){
+                if(opt.SBQQ__Feature__c == null && opt.SBQQ__ConfiguredSKU__c != null){
+                    hasIndependentOptions = true;
+                    break;
+                }
+            }
+
+            if(hasIndependentOptions){
+                // Default group 'Others'
+                groups.add(new ProductComponentGroup(
+                    ParentProductId = newProd.Id,
+                    Name = COMMON_GROUP_NAME,
+                    MinBundleComponents = 0,
+                    MaxBundleComponents = DEFAULT_MAX_COMPONENTS,
+                    Sequence = 1
+                ));
+            }
 
             List<SBQQ__ProductFeature__c> features = featureMap.get(origId);
             if (features != null) {
@@ -256,7 +267,7 @@ public class RCA_ProductCatalogBatchHelper {
                         Sequence = (option.SBQQ__Number__c != null) ? Integer.valueOf(option.SBQQ__Number__c) : null,
                         IsDefaultComponent = option.SBQQ__Selected__c,
                         IsComponentRequired = option.SBQQ__Required__c,
-                        Quantity = option.SBQQ__Quantity__c,
+                        Quantity = (option.SBQQ__Quantity__c == null) ? 1: option.SBQQ__Quantity__c,
                         IsQuantityEditable = option.SBQQ__QuantityEditable__c,
                         MinQuantity = option.SBQQ__MinQuantity__c,
                         MaxQuantity = option.SBQQ__MaxQuantity__c,
@@ -337,6 +348,10 @@ public class RCA_ProductCatalogBatchHelper {
                 return 'Check SBQQ_ProductOption__c record for optional SKU under group "Others".';
             }
         }
+        else if (sObjectName == 'Product2') {
+            return 'Product2 failed - Name: ' + failedRecord.get('Name') + ', SKU: ' + failedRecord.get('StockKeepingUnit');
+        }
+        
         return 'Unknown record type: ' + sObjectName;
     }
     

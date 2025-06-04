@@ -20,7 +20,7 @@ global class RCA_ProductCatalogBatch implements Database.Batchable<SObject>, Dat
 
         String query = 'SELECT Id, Name, ProductCode, IsActive, SBQQ__ConfigurationType__c, SBQQ__Component__c, StockKeepingUnit, RecordTypeId, '
                      + '(SELECT Id, SBQQ__OptionalSKU__c, SBQQ__Number__c, SBQQ__Selected__c, SBQQ__Required__c, SBQQ__Quantity__c, '
-                     + 'SBQQ__Feature__c, SBQQ__Feature__r.Name, SBQQ__QuantityEditable__c, SBQQ__MinQuantity__c, SBQQ__MaxQuantity__c, SBQQ__Bundled__c FROM SBQQ__Options__r), '
+                     + 'SBQQ__Feature__c, SBQQ__ConfiguredSKU__c, SBQQ__Feature__r.Name, SBQQ__QuantityEditable__c, SBQQ__MinQuantity__c, SBQQ__MaxQuantity__c, SBQQ__Bundled__c FROM SBQQ__Options__r), '
                      + '(SELECT Id, Name, SBQQ__MinOptionCount__c, SBQQ__MaxOptionCount__c, SBQQ__Number__c FROM SBQQ__Features__r) '
                      + 'FROM Product2 WHERE IsProcessed__c = FALSE';
 
@@ -78,7 +78,7 @@ global class RCA_ProductCatalogBatch implements Database.Batchable<SObject>, Dat
         //5. (Prepare data) -> Build ProductComponentGroup records for each CPQ product bundle
         Map<Id, Product2> resolvedOrigCPQToNewBundle = new Map<Id, Product2>();
         try {
-            List<ProductComponentGroup> groups = RCA_ProductCatalogBatchHelper.buildComponentGroups(resolvedOrigCPQToNewBundle, featureMap, allOrigCPQToNewBundleMap, insertedProductMap);
+            List<ProductComponentGroup> groups = RCA_ProductCatalogBatchHelper.buildComponentGroups(resolvedOrigCPQToNewBundle, featureMap, allOrigCPQToNewBundleMap, insertedProductMap, optionMap);
             allGroups.addAll(groups);
         } catch (Exception ex) {
             errorMessages.add('Error during building New ProductComponentGroup: ' + ex.getMessage());
@@ -124,18 +124,12 @@ global class RCA_ProductCatalogBatch implements Database.Batchable<SObject>, Dat
     global void finish(Database.BatchableContext bc) {
 
         if (!errorMessages.isEmpty()) {
-            System.debug('Failed records -->> ' + JSON.serializePretty(failedRecords));
     
             try {
-                // Step 1: Fetch successfully processed products (optional for context)
-                List<Product2> processedProducts = [
-                    SELECT Id, Name, IsProcessed__c FROM Product2 WHERE IsProcessed__c = TRUE
-                ];
-                
-                // Step 3: Send email notification
+                // Step 1: Send email notification
                 RCA_ProductCatalogBatchHelper.sendErrorNotification(errorMessages);
     
-                // Step 4: Perform rollback/deletion after notification
+                // Step 2: Perform rollback/deletion after notification
                 RCA_ProductCatalogBatchHelper.rollbackFailedCPQHierarchy(failedRecords, errorMessages);
     
             } catch (Exception ex) {
