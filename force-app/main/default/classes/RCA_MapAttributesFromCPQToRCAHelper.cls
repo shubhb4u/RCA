@@ -143,25 +143,57 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
      */
     private List<AttributeDefinition> createAttributeDefinitions(List<SBQQ__ConfigurationAttribute__c> configAttributes) {
         List<AttributeDefinition> listToInsert = new List<AttributeDefinition>();
-
+    
+        // Get all fields of ProductOption
+        Map<String, Schema.SObjectField> fieldsMap = Schema.SObjectType.SBQQ__ProductOption__c.fields.getMap();
+    
         for (SBQQ__ConfigurationAttribute__c attr : configAttributes) {
-            String apiName = attr.Name.replace(' ', '_');
+            String targetFieldApiName = attr.SBQQ__TargetField__c;
+    
+            if (fieldsMap.containsKey(targetFieldApiName)) {
+                Schema.DescribeFieldResult fieldDescribe = fieldsMap.get(targetFieldApiName).getDescribe();
+                String fieldType = fieldDescribe.getType().name();
+                String dataType;
 
-            listToInsert.add(new AttributeDefinition(
-                Name = attr.Name,
-                Label = attr.Name,
-                DeveloperName = apiName,
-                DataType = 'Picklist',
-                IsActive = true,
-                IsRequired = attr.SBQQ__Required__c,
-                Code = attr.SBQQ__Product__r.StockKeepingUnit + '_' + apiName,
-                PicklistId = attributeCodeAndAttributeIdMap.get(attr.SBQQ__TargetField__c)
-            ));
+                switch on fieldType {
+                    when 'STRING' {
+                        dataType = 'Text';
+                    }
+                    when 'PICKLIST' {
+                        dataType = 'Picklist';
+                    }
+                    when 'BOOLEAN' {
+                        dataType = 'Boolean';
+                    }
+                    when 'INTEGER' {
+                        dataType = 'Number';
+                    }
+                    when else {
+                        dataType = 'Text'; 
+                    }
+                }
+
+                String apiName = attr.Name.replace(' ', '_');
+    
+                listToInsert.add(new AttributeDefinition(
+                    Name = attr.Name,
+                    Label = attr.Name,
+                    DeveloperName = apiName,
+                    DataType = dataType, 
+                    IsActive = true,
+                    IsRequired = attr.SBQQ__Required__c,
+                    Code = attr.SBQQ__Product__r.StockKeepingUnit + '_' + apiName,
+                    PicklistId = (dataType == 'Picklist') ? attributeCodeAndAttributeIdMap.get(targetFieldApiName) : null
+                ));
+            } else {
+                System.debug('Target field not found in ProductOption fields: ' + targetFieldApiName);
+            }
         }
-
+    
         if (!listToInsert.isEmpty()) insert listToInsert;
         return listToInsert;
     }
+    
 
     /**
      * Creates ProductClassificationAttr (junction) records between classifications and attributes.
