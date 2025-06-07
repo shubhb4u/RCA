@@ -1,0 +1,26 @@
+<template>
+    <lightning-combobox
+            name="progress"
+            label="Account"
+            value={value}
+            placeholder="Select Account"
+            options={accounts}
+            onchange={handleChange} ></lightning-combobox>
+
+    <template lwc:if={accountName}>
+        <lightning-datatable
+                key-field="contactId"
+                data={contacts}
+                columns={columns}
+                onrowaction={handleRowAction}>
+        </lightning-datatable>
+    </template>
+    <template lwc:else>
+        <p>No Contacts present for this account !!</p>
+    </template>
+
+    <template lwc:if={displayModal}>
+        <c-edit-contact-record con-record-id={conRecordId} onclosemodal={closeModalHandler}></c-edit-contact-record>
+    </template>
+    
+</template>
