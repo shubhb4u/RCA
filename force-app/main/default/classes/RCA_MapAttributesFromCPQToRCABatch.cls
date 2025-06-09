@@ -1,6 +1,9 @@
-public class RCA_MapAttributesFromCPQToRCABatch implements Database.Batchable<SObject> {
+global class RCA_MapAttributesFromCPQToRCABatch implements Database.Batchable<SObject>, Database.Stateful {
 
-    private List<Id> inputProductIds;
+    public List<Id> inputProductIds;
+
+    // Shared error list to collect errors from helper
+    public List<String> errorMessages = new List<String>();
 
     // Default constructor: processes all products with config attributes and no BasedOnId
     public RCA_MapAttributesFromCPQToRCABatch() {}
@@ -10,7 +13,7 @@ public class RCA_MapAttributesFromCPQToRCABatch implements Database.Batchable<SO
         this.inputProductIds = productIds;
     }
 
-    public Database.QueryLocator start(Database.BatchableContext bc) {
+    global Database.QueryLocator start(Database.BatchableContext bc) {
         String baseQuery = 'SELECT Id, Name, SBQQ__HasConfigurationAttributes__c, BasedOnId, StockKeepingUnit FROM Product2 WHERE SBQQ__HasConfigurationAttributes__c = true AND (BasedOnId = null OR BasedOnId = \'\')';
 
         if (inputProductIds != null && !inputProductIds.isEmpty()) {
@@ -20,12 +23,32 @@ public class RCA_MapAttributesFromCPQToRCABatch implements Database.Batchable<SO
         }
     }
 
-    public void execute(Database.BatchableContext bc, List<Product2> scope) {
-        RCA_MapAttributesFromCPQToRCAHelper helper = new RCA_MapAttributesFromCPQToRCAHelper();
-        helper.process(scope);
+    global void execute(Database.BatchableContext bc, List<Product2> scope) {
+        // Pass the shared error list to the helper
+        RCA_MapAttributesFromCPQToRCAHelper helper = new RCA_MapAttributesFromCPQToRCAHelper(errorMessages);
+
+        try {
+            helper.process(scope);
+        } catch (Exception e) {
+            errorMessages.add('Batch execution error: ' + e.getMessage());
+        }
     }
 
-    public void finish(Database.BatchableContext bc) {
-        System.debug('Batch job completed.');
+    global void finish(Database.BatchableContext bc) {
+        if (!errorMessages.isEmpty()) {
+            sendErrorEmail(errorMessages);
+        }
+    }
+
+    private void sendErrorEmail(List<String> errors) {
+        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+        mail.setToAddresses(new List<String>{'Shubham.m@etg.digital'}); // Replace with actual email
+        mail.setSubject('RCA Map Attributes Batch - Errors Report');
+        mail.setPlainTextBody('The following errors occurred during batch processing:\n\n' + String.join(errors, '\n'));
+        try {
+            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
+        } catch (Exception e) {
+            System.debug('Error sending batch error email: ' + e.getMessage());
+        }
     }
 }

@@ -1,5 +1,7 @@
 public class RCA_MapAttributesFromCPQToRCAHelper {
 
+    private List<String> errors; 
+
     // Stores picklist codes already present in the system
     private List<String> attrPicklistCodeList = new List<String>();
 
@@ -8,6 +10,11 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
 
     // Keeps track of product IDs being processed
     private Set<Id> productIds = new Set<Id>();
+
+    // Constructor accepts shared error list from batch
+    public RCA_MapAttributesFromCPQToRCAHelper(List<String> sharedErrorList) {
+        this.errors = sharedErrorList;
+    }
 
     /**
      * Main entry point for processing a batch of Product2 records.
@@ -83,7 +90,7 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
             ));
         }
 
-        if (!listToInsert.isEmpty()) insert listToInsert;
+        safeInsert(listToInsert);
         return listToInsert;
     }
 
@@ -117,7 +124,7 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
             }
         }
 
-        if (!valuesToInsert.isEmpty()) insert valuesToInsert;
+        safeInsert(valuesToInsert);
     }
 
     /**
@@ -125,26 +132,63 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
      */
     private List<ProductClassification> createProductClassifications(List<Product2> products) {
         List<ProductClassification> listToInsert = new List<ProductClassification>();
+        Set<String> classificationCodes = new Set<String>();
+        
+        // Build all potential codes
         for (Product2 p : products) {
-            listToInsert.add(new ProductClassification(
-                Name = p.Name + ' Classification',
-                Code = p.StockKeepingUnit + '_CLASS',
-                Status = 'Active'
-            ));
+            classificationCodes.add(p.StockKeepingUnit + '_CLASS');
             productIds.add(p.Id);
         }
-
-        if (!listToInsert.isEmpty()) insert listToInsert;
+    
+        // Fetch existing ProductClassifications with those codes
+        Map<String, ProductClassification> existingClassifications = new Map<String, ProductClassification>();
+        for (ProductClassification pc : [
+            SELECT Id, Code 
+            FROM ProductClassification 
+            WHERE Code IN :classificationCodes
+        ]) {
+            existingClassifications.put(pc.Code, pc);
+        }
+    
+        // Only insert those that don’t already exist
+        for (Product2 p : products) {
+            String code = p.StockKeepingUnit + '_CLASS';
+            if (!existingClassifications.containsKey(code)) {
+                listToInsert.add(new ProductClassification(
+                    Name = p.Name + ' Classification',
+                    Code = code,
+                    Status = 'Active'
+                ));
+            }
+        }
+    
+        safeInsert(listToInsert);
         return listToInsert;
     }
+    
 
     /**
      * Creates AttributeDefinition records linked to product config attributes.
      */
     private List<AttributeDefinition> createAttributeDefinitions(List<SBQQ__ConfigurationAttribute__c> configAttributes) {
         List<AttributeDefinition> listToInsert = new List<AttributeDefinition>();
+        Set<String> attributeCodes = new Set<String>();
     
-        // Get all fields of ProductOption
+        // Step 1: Precompute all potential codes
+        for (SBQQ__ConfigurationAttribute__c attr : configAttributes) {
+            String apiName = attr.Name.replace(' ', '_');
+            attributeCodes.add(attr.SBQQ__Product__r.StockKeepingUnit + '_' + apiName);
+        }
+    
+        // Step 2: Query existing AttributeDefinitions by Code
+        Map<String, AttributeDefinition> existingAttrDefs = new Map<String, AttributeDefinition>();
+        for (AttributeDefinition ad : [
+            SELECT Id, Code FROM AttributeDefinition WHERE Code IN :attributeCodes
+        ]) {
+            existingAttrDefs.put(ad.Code, ad);
+        }
+    
+        // Step 3: Prepare for insert only those that don't exist
         Map<String, Schema.SObjectField> fieldsMap = Schema.SObjectType.SBQQ__ProductOption__c.fields.getMap();
     
         for (SBQQ__ConfigurationAttribute__c attr : configAttributes) {
@@ -152,48 +196,39 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
     
             if (fieldsMap.containsKey(targetFieldApiName)) {
                 Schema.DescribeFieldResult fieldDescribe = fieldsMap.get(targetFieldApiName).getDescribe();
-                // System.debug('Data type of ' + targetFieldApiName + ' is: ' + fieldDescribe.getType());
                 String fieldType = fieldDescribe.getType().name();
                 String dataType;
-
-                switch on fieldType {
-                    when 'STRING' {
-                        dataType = 'Text';
-                    }
-                    when 'PICKLIST' {
-                        dataType = 'Picklist';
-                    }
-                    when 'BOOLEAN' {
-                        dataType = 'Boolean';
-                    }
-                    when 'INTEGER' {
-                        dataType = 'Number';
-                    }
-                    when else {
-                        dataType = 'Text'; 
-                    }
-                }
-
-                String apiName = attr.Name.replace(' ', '_');
     
-                listToInsert.add(new AttributeDefinition(
-                    Name = attr.Name,
-                    Label = attr.Name,
-                    DeveloperName = apiName,
-                    DataType = dataType, 
-                    IsActive = true,
-                    IsRequired = attr.SBQQ__Required__c,
-                    Code = attr.SBQQ__Product__r.StockKeepingUnit + '_' + apiName,
-                    PicklistId = (dataType == 'Picklist') ? attributeCodeAndAttributeIdMap.get(targetFieldApiName) : null
-                ));
+                switch on fieldType {
+                    when 'STRING'  { dataType = 'Text'; }
+                    when 'PICKLIST' { dataType = 'Picklist'; }
+                    when 'DOUBLE'  { dataType = 'Number'; }
+                    when else      { dataType = 'Text'; }
+                }
+    
+                String apiName = attr.Name.replace(' ', '_');
+                String code = attr.SBQQ__Product__r.StockKeepingUnit + '_' + apiName;
+    
+                if (!existingAttrDefs.containsKey(code)) {
+                    listToInsert.add(new AttributeDefinition(
+                        Name = attr.Name,
+                        Label = attr.Name,
+                        DataType = dataType, 
+                        IsActive = true,
+                        IsRequired = attr.SBQQ__Required__c,
+                        Code = code,
+                        PicklistId = (dataType == 'Picklist') ? attributeCodeAndAttributeIdMap.get(targetFieldApiName) : null
+                    ));
+                }
             } else {
                 System.debug('Target field not found in ProductOption fields: ' + targetFieldApiName);
             }
         }
     
-        if (!listToInsert.isEmpty()) insert listToInsert;
+        safeInsert(listToInsert);
         return listToInsert;
     }
+    
     
 
     /**
@@ -201,22 +236,41 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
      */
     private void createProductClassificationAttributes(List<ProductClassification> classifications, List<AttributeDefinition> attrDefs) {
         List<ProductClassificationAttr> listToInsert = new List<ProductClassificationAttr>();
-
+    
+        // Collect all possible classification and attribute IDs
+        Set<Id> classificationIds = new Set<Id>();
+        Set<Id> attributeDefIds = new Set<Id>();
+        for (ProductClassification pc : classifications) classificationIds.add(pc.Id);
+        for (AttributeDefinition ad : attrDefs) attributeDefIds.add(ad.Id);
+    
+        // Query existing junctions
+        Set<String> existingKeys = new Set<String>();
+        for (ProductClassificationAttr existing : [SELECT ProductClassificationId, AttributeDefinitionId FROM ProductClassificationAttr
+                    WHERE ProductClassificationId IN :classificationIds AND AttributeDefinitionId IN :attributeDefIds ]) {
+                        
+                        existingKeys.add(existing.ProductClassificationId + '_' + existing.AttributeDefinitionId);
+        }
+    
+        // Prepare only non-existing ones for insert
         for (ProductClassification pc : classifications) {
             String sku = pc.Code.replace('_CLASS', '');
             for (AttributeDefinition ad : attrDefs) {
                 if (ad.Code.startsWith(sku)) {
-                    listToInsert.add(new ProductClassificationAttr(
-                        ProductClassificationId = pc.Id,
-                        AttributeDefinitionId = ad.Id,
-                        Name = ad.Name
-                    ));
+                    String key = pc.Id + '_' + ad.Id;
+                    if (!existingKeys.contains(key)) {
+                        listToInsert.add(new ProductClassificationAttr(
+                            ProductClassificationId = pc.Id,
+                            AttributeDefinitionId = ad.Id,
+                            Name = ad.Name
+                        ));
+                    }
                 }
             }
         }
-
-        if (!listToInsert.isEmpty()) insert listToInsert;
+    
+        safeInsert(listToInsert);
     }
+    
 
     /**
      * Updates Product2.BasedOnId field with the created classification.
@@ -249,17 +303,52 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
                 
                 if(newSkuToIdMap.get(NewProductSku) != null){
                     System.debug('In New Prod PC');
-				 	newSkuToProductMap.get(NewProductSku).BasedOnId = skuToClassIdMap.get(prod.StockKeepingUnit);
+                    newSkuToProductMap.get(NewProductSku).BasedOnId = skuToClassIdMap.get(prod.StockKeepingUnit);
                     toUpdate.add(newSkuToProductMap.get(NewProductSku));
 
                 }else{
                     System.debug('In New Prod PC');
-                 	prod.BasedOnId = skuToClassIdMap.get(prod.StockKeepingUnit);
-                	toUpdate.add(prod);
+                    prod.BasedOnId = skuToClassIdMap.get(prod.StockKeepingUnit);
+                    toUpdate.add(prod);
                 }
             }
         }
 
-        if (!toUpdate.isEmpty()) update toUpdate;
+        safeUpdate(toUpdate);
+    }
+
+
+    /**
+     * Helper method to safely insert records and catch errors, adding them to the shared error list.
+     */
+    private void safeInsert(List<SObject> records) {
+        if (records.isEmpty()) return;
+
+        try {
+            insert records;
+        } catch (DmlException e) {
+            for (Integer i = 0; i < e.getNumDml(); i++) {
+                errors.add('Insert failed: ' + e.getDmlMessage(i));
+            }
+        } catch (Exception e) {
+            errors.add('Insert failed: ' + e.getMessage());
+        }
+    }
+
+    /**
+     * Helper method to safely update records and catch errors, adding them to the shared error list.
+     */
+    private void safeUpdate(List<SObject> records) {
+        if (records.isEmpty()) return;
+
+        try {
+            update records;
+        } catch (DmlException e) {
+            for (Integer i = 0; i < e.getNumDml(); i++) {
+                errors.add('Update failed: ' + e.getDmlMessage(i));
+            }
+        } catch (Exception e) {
+            errors.add('Update failed: ' + e.getMessage());
+        }
     }
 }

@@ -120,6 +120,15 @@ global class RCA_ProductCatalogBatch implements Database.Batchable<SObject>, Dat
 
         //11.(DML) -> Finally mark source CPQ products as processed
         RCA_ProductCatalogBatchHelper.markProductsProcessed(cpqProducts, errorMessages, failedRecords);
+
+        // 12.(DML) -> Immediately roll back any child‐level failures
+        if (!errorMessages.isEmpty()) {
+            try {
+                RCA_ProductCatalogBatchHelper.rollbackFailedCPQHierarchy(failedRecords, errorMessages);
+            } catch (Exception ex) {
+                System.debug('Exception during in‐chunk rollback: ' + ex.getMessage());
+            }
+        }
     }
 
     // Send an error notification after the batch completes
@@ -128,11 +137,7 @@ global class RCA_ProductCatalogBatch implements Database.Batchable<SObject>, Dat
         if (!errorMessages.isEmpty()) {
     
             try {
-                // Step 1: Send email notification
                 RCA_ProductCatalogBatchHelper.sendErrorNotification(errorMessages);
-    
-                // Step 2: Perform rollback/deletion after notification
-                RCA_ProductCatalogBatchHelper.rollbackFailedCPQHierarchy(failedRecords, errorMessages);
     
             } catch (Exception ex) {
                 System.debug('Exception while handling finish logic: ' + ex.getMessage());

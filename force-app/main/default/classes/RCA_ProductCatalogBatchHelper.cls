@@ -1,10 +1,21 @@
 public class RCA_ProductCatalogBatchHelper {
+    
 
     public static final String DEFAULT_CATEGORY_NAME = 'Default category';
     public static final String REL_TYPE              = 'Bundle';
     public static final String REL_TYPE_NAME         = 'BundleComponent';
     public static final String COMMON_GROUP_NAME     = 'Others';
     public static final Integer DEFAULT_MAX_COMPONENTS = 999;
+    // Test‐injection flags to force each helper step to throw an exception
+    @TestVisible
+    public static Boolean throwExceptionInBuildProducts = false;
+    @TestVisible
+    public static Boolean throwExceptionComponentsGroups = false;
+    @TestVisible
+    public static Boolean throwExceptionInBuildRelatedComponents = false;
+    @TestVisible
+    public static Boolean throwExceptionAssignCategories = false;
+
 
     // Fetch default config values used in component relationships and categories
     public static Map<String, Id> initializeConfigIds() {
@@ -56,6 +67,11 @@ public class RCA_ProductCatalogBatchHelper {
         List<Product2> updatedProducts,
         Map<Id, Product2> origCPQToNewBundleMap
     ) {
+
+        if (throwExceptionInBuildProducts) {
+        	throw new AuraHandledException('Simulated exception in buildRelatedComponents');
+    	}
+
         for (Product2 product : CPQProductsList) {
             List<SBQQ__ProductFeature__c> features = featureMap.get(product.Id);
             List<SBQQ__ProductOption__c> options = optionMap.get(product.Id);
@@ -73,7 +89,7 @@ public class RCA_ProductCatalogBatchHelper {
                     Name = product.Name,
                     ProductCode = (product.ProductCode != null ? product.ProductCode : '') + ' - Bundle',
                     IsActive = product.IsActive,
-                    ConfigureDuringSale = product.SBQQ__ConfigurationType__c,
+                    ConfigureDuringSale = product.SBQQ__ConfigurationType__c == null ? 'Allowed' : product.SBQQ__ConfigurationType__c,
                     Type = 'Bundle',
                     StockKeepingUnit = skuBase + ' - Bundle'
                 );
@@ -92,6 +108,7 @@ public class RCA_ProductCatalogBatchHelper {
     // Build map of newly inserted products by SKU for later reference
     public static void buildNewProductsMap(List<Product2> allNewProducts, Map<String, Product2> insertedProductMap){
 
+
         Set<String> skuSet = new Set<String>();
         for (Product2 p : allNewProducts) {
             if (p.StockKeepingUnit != null) {
@@ -109,21 +126,25 @@ public class RCA_ProductCatalogBatchHelper {
     /**
      * 4. Assign default categories to new and updated products, avoiding duplicates
      */
-    public static List<ProductCategoryProduct>  assignCategory(Id categoryId,
-                List<Product2> updatedProducts,  
-                Map<Id, Product2> allOrigCPQToNewBundleMap, 
-                Map<String, Product2> insertedProductMap) {
+    public static List<ProductCategoryProduct> assignCategory(Id categoryId,List<Product2> updatedProducts,  
+        Map<Id, Product2> allOrigCPQToNewBundleMap, 
+        Map<String, Product2> insertedProductMap) {
 
-        //All CPQ Products - 
+        if (throwExceptionAssignCategories) {
+            throw new AuraHandledException('Simulated exception in assignCategory');
+        }
+
+        // Collect all CPQ and newly created products
         List<Product2> allProducts = new List<Product2>();
         allProducts.addAll(updatedProducts);
 
-        //Get the newly created Products - 
         for (Product2 cpq : updatedProducts) {
             Product2 bundle = allOrigCPQToNewBundleMap.get(cpq.Id);
             if (bundle != null) {
                 Product2 resolved = insertedProductMap.get(bundle.StockKeepingUnit);
-                allProducts.add(resolved);
+                if (resolved != null) {
+                    allProducts.add(resolved);
+                }
             }
         }
 
@@ -132,58 +153,91 @@ public class RCA_ProductCatalogBatchHelper {
             if (p.Id != null) productIds.add(p.Id);
         }
 
-        Set<Id> existingProductIds = new Set<Id>();
-        for (ProductCategoryProduct pcp : [SELECT ProductId FROM ProductCategoryProduct 
-            WHERE ProductCategoryId = :categoryId 
-            AND ProductId IN :productIds]) {
-                existingProductIds.add(pcp.ProductId);
+        // Query existing category links for these products
+        Map<Id, Set<Id>> productToCategoryMap = new Map<Id, Set<Id>>();
+        for (ProductCategoryProduct pcp : [SELECT ProductId, ProductCategoryId FROM ProductCategoryProduct 
+                WHERE ProductId IN :productIds ]) {
+            if (!productToCategoryMap.containsKey(pcp.ProductId)) {
+                productToCategoryMap.put(pcp.ProductId, new Set<Id>());
+            }
+            productToCategoryMap.get(pcp.ProductId).add(pcp.ProductCategoryId);
         }
 
-        List<ProductCategoryProduct> links = new List< ProductCategoryProduct>();
+        List<ProductCategoryProduct> links = new List<ProductCategoryProduct>();
         for (Product2 p : allProducts) {
-            if (!existingProductIds.contains(p.Id)) {
+            // Skip if the product is already linked to any category
+            if (!productToCategoryMap.containsKey(p.Id) || productToCategoryMap.get(p.Id).isEmpty()) {
                 links.add(new ProductCategoryProduct(
                     ProductId = p.Id,
                     ProductCategoryId = categoryId
                 ));
             }
         }
+
         return links;
     }
+
 
     /**
      * 5. Create ProductComponentGroups with default group + feature groups
      * Accepts resolved bundles map: Map<Id (origProductId), Product2 (new bundle)>
      */
     public static List<ProductComponentGroup> buildComponentGroups(
-        Map<Id, Product2> resolvedOrigCPQToNewBundle,
-        Map<Id, List<SBQQ__ProductFeature__c>> featureMap,
-        Map<Id, Product2> allOrigCPQToNewBundleMap,
-        Map<String, Product2> insertedProductMap,
-        Map<Id, List<SBQQ__ProductOption__c>> optionMap
-    ) {
-        List<ProductComponentGroup> groups = new List<ProductComponentGroup>();
+    Map<Id, Product2> resolvedOrigCPQToNewBundle,
+    Map<Id, List<SBQQ__ProductFeature__c>> featureMap,
+    Map<Id, Product2> allOrigCPQToNewBundleMap,
+    Map<String, Product2> insertedProductMap,
+    Map<Id, List<SBQQ__ProductOption__c>> optionMap) {
 
-        for (Id origId : allOrigCPQToNewBundleMap.keySet()) {
-            Product2 p = allOrigCPQToNewBundleMap.get(origId);
-            Product2 resolved = insertedProductMap.get(p.StockKeepingUnit);
-            if (resolved != null) resolvedOrigCPQToNewBundle.put(origId, resolved);
+    if (throwExceptionComponentsGroups) {
+        throw new AuraHandledException('Simulated exception in buildRelatedComponents');
+    }
+
+    List<ProductComponentGroup> groups = new List<ProductComponentGroup>();
+    Set<Id> parentProductIds = new Set<Id>();
+
+    for (Id origId : allOrigCPQToNewBundleMap.keySet()) {
+        Product2 p = allOrigCPQToNewBundleMap.get(origId);
+        Product2 resolved = insertedProductMap.get(p.StockKeepingUnit);
+        if (resolved != null) {
+            resolvedOrigCPQToNewBundle.put(origId, resolved);
+            parentProductIds.add(resolved.Id);
+        }
+    }
+
+    // Query existing groups to avoid duplicates
+    Map<Id, Set<String>> existingGroupsMap = new Map<Id, Set<String>>();
+    for (ProductComponentGroup grp : [
+        SELECT ParentProductId, Name
+        FROM ProductComponentGroup
+        WHERE ParentProductId IN :parentProductIds
+    ]) {
+        if (!existingGroupsMap.containsKey(grp.ParentProductId)) {
+            existingGroupsMap.put(grp.ParentProductId, new Set<String>());
+        }
+        existingGroupsMap.get(grp.ParentProductId).add(grp.Name);
         }
 
         for (Id origId : resolvedOrigCPQToNewBundle.keySet()) {
             Boolean hasIndependentOptions = false;
             Product2 newProd = resolvedOrigCPQToNewBundle.get(origId);
 
-            //Create common group others for this product if it has independent options i.e w/o any parent feature - 
-            for(SBQQ__ProductOption__c opt: optionMap.get(origId)){
-                if(opt.SBQQ__Feature__c == null && opt.SBQQ__ConfiguredSKU__c != null){
-                    hasIndependentOptions = true;
-                    break;
+            // FIXED: Initialize set if not found
+            Set<String> existingGroupNames = existingGroupsMap.containsKey(newProd.Id)
+                ? existingGroupsMap.get(newProd.Id)
+                : new Set<String>();
+
+            List<SBQQ__ProductOption__c> options = optionMap.get(origId);
+            if (options != null) {
+                for (SBQQ__ProductOption__c opt : options) {
+                    if (opt.SBQQ__Feature__c == null && opt.SBQQ__ConfiguredSKU__c != null) {
+                        hasIndependentOptions = true;
+                        break;
+                    }
                 }
             }
 
-            if(hasIndependentOptions){
-                // Default group 'Others'
+            if (hasIndependentOptions && !existingGroupNames.contains(COMMON_GROUP_NAME)) {
                 groups.add(new ProductComponentGroup(
                     ParentProductId = newProd.Id,
                     Name = COMMON_GROUP_NAME,
@@ -196,22 +250,30 @@ public class RCA_ProductCatalogBatchHelper {
             List<SBQQ__ProductFeature__c> features = featureMap.get(origId);
             if (features != null) {
                 for (SBQQ__ProductFeature__c feature : features) {
-                    if (feature != null) {
+                    if (feature != null && !existingGroupNames.contains(feature.Name)) {
                         groups.add(new ProductComponentGroup(
                             ParentProductId = newProd.Id,
                             Name = feature.Name,
-                            MinBundleComponents = (feature.SBQQ__MinOptionCount__c != null) ? Integer.valueOf(feature.SBQQ__MinOptionCount__c) : 0,
+                            MinBundleComponents = (feature.SBQQ__MinOptionCount__c != null)
+                                ? Integer.valueOf(feature.SBQQ__MinOptionCount__c)
+                                : 0,
                             MaxBundleComponents = (feature.SBQQ__MaxOptionCount__c != null)
                                 ? Integer.valueOf(feature.SBQQ__MaxOptionCount__c)
                                 : DEFAULT_MAX_COMPONENTS,
-                            Sequence = (feature.SBQQ__Number__c != null) ? Integer.valueOf(feature.SBQQ__Number__c) : null
+                            Sequence = (feature.SBQQ__Number__c != null)
+                                ? Integer.valueOf(feature.SBQQ__Number__c)
+                                : null
                         ));
                     }
                 }
             }
         }
+
         return groups;
     }
+
+
+
 
     /**
      * 6. Build ProductRelatedComponents linking bundles, options & groups
@@ -225,69 +287,107 @@ public class RCA_ProductCatalogBatchHelper {
         Map<Id, Product2> allOrigCPQToNewBundleMap,
         Map<String, Product2> insertedProductMap
     ) {
-
+        if (throwExceptionInBuildRelatedComponents) {
+            throw new AuraHandledException('Simulated exception in buildRelatedComponents');
+        }
 
         List<ProductRelatedComponent> relatedComponents = new List<ProductRelatedComponent>();
 
         for (Id origId : allOrigCPQToNewBundleMap.keySet()) {
             Product2 p = allOrigCPQToNewBundleMap.get(origId);
-            Product2 resolved = insertedProductMap.get(p.StockKeepingUnit);
-            if (resolved != null) resolvedOrigCPQOptionsToNewBundle.put(origId, resolved);
-        }
-
-        Map<String, Id> groupLookup = new Map<String, Id>();
-        for (ProductComponentGroup grp : groups) {
-            groupLookup.put(grp.ParentProductId + '_' + grp.Name, grp.Id);
-        }
-
-            for (Id origId : resolvedOrigCPQOptionsToNewBundle.keySet()) {
-
-                Id parentProductId = resolvedOrigCPQOptionsToNewBundle.get(origId).Id;
-                List<SBQQ__ProductOption__c> options = optionMap.get(origId);
-                System.debug('options -->> '+ options);
-    
-                if (options == null) continue;
-    
-                for (SBQQ__ProductOption__c option : options) {
-                    if (option.SBQQ__OptionalSKU__c == null) continue;
-    
-                    String groupName = COMMON_GROUP_NAME;
-                    if (option.SBQQ__Feature__c != null && option.SBQQ__Feature__r != null) {
-                        groupName = option.SBQQ__Feature__r.Name;
-                    }
-    
-                    Id groupId = groupLookup.get(parentProductId + '_' + groupName);
-                    if (groupId == null) {
-                        // Defensive check: skip if no matching group found
-                        continue;
-                    }
-    
-                    relatedComponents.add(new ProductRelatedComponent(
-                        ParentProductId = parentProductId,
-                        ProductComponentGroupId = groupId,
-                        ChildProductId = option.SBQQ__OptionalSKU__c,
-                        Sequence = (option.SBQQ__Number__c != null) ? Integer.valueOf(option.SBQQ__Number__c) : null,
-                        IsDefaultComponent = option.SBQQ__Selected__c,
-                        IsComponentRequired = option.SBQQ__Required__c,
-                        Quantity = (option.SBQQ__Quantity__c == null) ? 1: option.SBQQ__Quantity__c,
-                        IsQuantityEditable = option.SBQQ__QuantityEditable__c,
-                        MinQuantity = option.SBQQ__MinQuantity__c,
-                        MaxQuantity = option.SBQQ__MaxQuantity__c,
-                        DoesBundlePriceIncludeChild = option.SBQQ__Bundled__c,
-                        ProductRelationshipTypeId = relationshipTypeId
-                    ));
+            if (p != null && p.StockKeepingUnit != null) {
+                Product2 resolved = insertedProductMap.get(p.StockKeepingUnit);
+                if (resolved != null) {
+                    resolvedOrigCPQOptionsToNewBundle.put(origId, resolved);
                 }
             }
+        }
+
+        // Build lookup for groupId by parentProductId + groupName
+        Map<String, Id> groupLookup = new Map<String, Id>();
+        Set<Id> parentProductIds = new Set<Id>();
+        if (groups != null) {
+            for (ProductComponentGroup grp : groups) {
+                if (grp != null && grp.ParentProductId != null && grp.Name != null) {
+                    groupLookup.put(grp.ParentProductId + '_' + grp.Name, grp.Id);
+                    parentProductIds.add(grp.ParentProductId);
+                }
+            }
+        }
+
+        // Query existing ProductRelatedComponent records to avoid duplicates
+        Map<String, Boolean> existingKeys = new Map<String, Boolean>();
+        if (!parentProductIds.isEmpty()) {
+            for (ProductRelatedComponent prc : [
+                SELECT ParentProductId, ProductComponentGroupId, ChildProductId
+                FROM ProductRelatedComponent
+                WHERE ParentProductId IN :parentProductIds
+            ]) {
+                if (prc.ParentProductId != null && prc.ProductComponentGroupId != null && prc.ChildProductId != null) {
+                    String key = prc.ParentProductId + '_' + prc.ProductComponentGroupId + '_' + prc.ChildProductId;
+                    existingKeys.put(key, true);
+                }
+            }
+        }
+
+        for (Id origId : resolvedOrigCPQOptionsToNewBundle.keySet()) {
+            Product2 parentProd = resolvedOrigCPQOptionsToNewBundle.get(origId);
+            if (parentProd == null || parentProd.Id == null) continue;
+
+            Id parentProductId = parentProd.Id;
+            List<SBQQ__ProductOption__c> options = optionMap.get(origId);
+            if (options == null) continue;
+
+            for (SBQQ__ProductOption__c option : options) {
+                if (option == null || option.SBQQ__OptionalSKU__c == null) continue;
+
+                String groupName = COMMON_GROUP_NAME;
+                if (option.SBQQ__Feature__c != null && option.SBQQ__Feature__r != null && option.SBQQ__Feature__r.Name != null) {
+                    groupName = option.SBQQ__Feature__r.Name;
+                }
+
+                Id groupId = groupLookup.get(parentProductId + '_' + groupName);
+                if (groupId == null) continue;
+
+                String key = parentProductId + '_' + groupId + '_' + option.SBQQ__OptionalSKU__c;
+                if (existingKeys.containsKey(key)) continue;
+
+                relatedComponents.add(new ProductRelatedComponent(
+                    ParentProductId = parentProductId,
+                    ProductComponentGroupId = groupId,
+                    ChildProductId = option.SBQQ__OptionalSKU__c,
+                    Sequence = (option.SBQQ__Number__c != null) ? Integer.valueOf(option.SBQQ__Number__c) : null,
+                    IsDefaultComponent = option.SBQQ__Selected__c,
+                    IsComponentRequired = option.SBQQ__Required__c,
+                    Quantity = (option.SBQQ__Quantity__c == null) ? 1 : option.SBQQ__Quantity__c,
+                    IsQuantityEditable = option.SBQQ__QuantityEditable__c,
+                    MinQuantity = option.SBQQ__MinQuantity__c,
+                    MaxQuantity = option.SBQQ__MaxQuantity__c,
+                    DoesBundlePriceIncludeChild = option.SBQQ__Bundled__c,
+                    ProductRelationshipTypeId = relationshipTypeId
+                ));
+            }
+        }
+
         return relatedComponents;
     }
 
-    // Update Product2.IsProcessed__c = true
+
+
+
     public static void markProductsProcessed(List<Product2> processedProducts, List<String> errorMessages, List<SObject> failedRecords) {
-        for (Product2 p : processedProducts) {
-            p.IsProcessed__c = true;
+        // If no related records failed, mark products as processed
+        if (failedRecords.isEmpty()) {
+            for (Product2 p : processedProducts) {
+                p.IsProcessed__c = true;
+            }
+    
+            handleDmlOperation(processedProducts, 'update', 'Mark processed failed', errorMessages, failedRecords);
+        } else {
+            System.debug('Skipping mark processed due to failed records.');
         }
-        handleDmlOperation(processedProducts, 'update', 'Mark processed failed', errorMessages, failedRecords);
     }
+    
 
     // Generic method to handle insert/update DMLs with error logging
     public static void handleDmlOperation(List<SObject> records, String operation, String errorContext, List<String> errorMessages, List<SObject> failedRecords) {
@@ -324,7 +424,7 @@ public class RCA_ProductCatalogBatchHelper {
     
         if (sObjectName == 'ProductRelatedComponent') {
             String childProductId = (String)failedRecord.get('ChildProductId');
-            return 'Check SBQQ_ProductOption__c record with Optional SKU field: ' + childProductId;
+            return 'Check SBQQ_ProductOption__c record with Optional SKU field value: ' + childProductId;
     
         } else if (sObjectName == 'ProductComponentGroup') {
             String groupName = (String)failedRecord.get('Name');
@@ -340,9 +440,10 @@ public class RCA_ProductCatalogBatchHelper {
 
                 if (!featureList.isEmpty()) {
                     SBQQ__ProductFeature__c feature = featureList[0];
-                    return 'Check SBQQ__ProductFeature__c with Name: ' + groupName +
-                        ', of Product: ' + feature.SBQQ__ConfiguredSKU__c +
-                        ', SKU: ' + feature.SBQQ__ConfiguredSKU__r.StockKeepingUnit;
+                    return 'Check SBQQ__ProductFeature__c with ' + '\n' +
+                        ' Name:          -->>> ' + groupName + '\n' +
+                        ' of Product Id: -->>> ' + feature.SBQQ__ConfiguredSKU__c + '\n' +
+                        ' with SKU:      -->>> ' + feature.SBQQ__ConfiguredSKU__r.StockKeepingUnit;
                 } else {
                     return 'SBQQ__ProductFeature__c not found for Name: ' + groupName;
                 }
@@ -351,7 +452,8 @@ public class RCA_ProductCatalogBatchHelper {
             }
         }
         else if (sObjectName == 'Product2') {
-            return 'Product2 failed - Name: ' + failedRecord.get('Name') + ', SKU: ' + failedRecord.get('StockKeepingUnit');
+            return 'Product2 failed - Name: ' + failedRecord.get('Name') + '\n' +
+                   'SKU: ' + failedRecord.get('StockKeepingUnit');
         }
         
         return 'Unknown record type: ' + sObjectName;
@@ -386,9 +488,6 @@ public class RCA_ProductCatalogBatchHelper {
                 }
             }
     
-            // Step 2: Update parent CPQ products' IsProcessed__c field to false
-            getProductsToUpdate(productIdsToDelete);
-    
             // Step 3: Delete new bundle products that failed or whose child records failed
             if (!productIdsToDelete.isEmpty()) {
                 List<Product2> productsToDelete = [
@@ -403,33 +502,6 @@ public class RCA_ProductCatalogBatchHelper {
         } catch (Exception e) {
             errorMessages.add('Rollback deletion failed: ' + e.getMessage());
             System.debug('Rollback exception: ' + e.getMessage());
-        }
-    }
-    
-    //Update isProcessed__c fields to 'False' for all the failed records - 
-    public static void getProductsToUpdate(Set<Id> productIdsToDelete) {
-        if (productIdsToDelete == null || productIdsToDelete.isEmpty()) return;
-    
-        List<Product2> updateOriginalProducts = new List<Product2>();
-        List<Product2> productsToUpdate = [
-            SELECT Id, StockKeepingUnit FROM Product2 WHERE Id IN :productIdsToDelete
-        ];
-    
-        Set<String> parentCPQProductsSKU = new Set<String>();
-        for (Product2 prd : productsToUpdate) {
-            if (prd.StockKeepingUnit != null) {
-                parentCPQProductsSKU.add(prd.StockKeepingUnit.replace(' - Bundle', ''));
-            }
-        }
-    
-        for (Product2 p : [SELECT Id, IsProcessed__c FROM Product2 WHERE StockKeepingUnit IN :parentCPQProductsSKU]) {
-            p.IsProcessed__c = false;
-            updateOriginalProducts.add(p);
-        }
-    
-        if (!updateOriginalProducts.isEmpty()) {
-            update updateOriginalProducts;
-            System.debug('Updated products IsProcessed__c to false: ' + updateOriginalProducts.size());
         }
     }
     

@@ -8,7 +8,7 @@ public class RCA_BatchExceptionLogger {
                         + '\n'
                         + '\n[Context: ' + context + ']'
                         + '\n'
-                        + '\n[*** Failed new Record description:*** \n' + recordIdentifier + ']'
+                        // + '\n[*** Failed new Record description:*** \n' + recordIdentifier + ']'
                         + '\n'
                         + '\n[Message: ' + error.getMessage()
                         + '\n'
