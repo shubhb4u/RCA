@@ -360,7 +360,10 @@ public class RCA_ProductCatalogBatchHelper {
                     IsDefaultComponent = option.SBQQ__Selected__c,
                     IsComponentRequired = option.SBQQ__Required__c,
                     Quantity = (option.SBQQ__Quantity__c == null) ? 1 : option.SBQQ__Quantity__c,
-                    IsQuantityEditable = option.SBQQ__QuantityEditable__c,
+                    IsQuantityEditable = 
+                    (option.SBQQ__QuantityEditable__c || 
+                    option.SBQQ__MinQuantity__c != null || 
+                    option.SBQQ__MaxQuantity__c != null),
                     MinQuantity = option.SBQQ__MinQuantity__c,
                     MaxQuantity = option.SBQQ__MaxQuantity__c,
                     DoesBundlePriceIncludeChild = option.SBQQ__Bundled__c,

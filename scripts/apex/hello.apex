@@ -10,3 +10,9 @@ System.debug('Hello World!');
 System.debug('My name is ' + tempvar);
 
 RCA_ProductCatalogBatch batch = new RCA_ProductCatalogBatch(new List<Id>{'01tKj00000QXEQOIA5'});
+Database.executeBatch(batch);
+
+
+
+RCA_MapAttributesFromCPQToRCABatch batch = new RCA_MapAttributesFromCPQToRCABatch(new List<Id>{'01tKj00000QXVuTIAX', '01tKj00000QXWGbIAP'});
+Database.executeBatch(batch);

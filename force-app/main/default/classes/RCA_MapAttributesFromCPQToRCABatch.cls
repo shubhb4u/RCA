@@ -42,7 +42,7 @@ global class RCA_MapAttributesFromCPQToRCABatch implements Database.Batchable<SO
 
     private void sendErrorEmail(List<String> errors) {
         Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-        mail.setToAddresses(new List<String>{'Shubham.m@etg.digital'}); // Replace with actual email
+        mail.setToAddresses(new List<String>{'Shubham.m@etg.digital', 'Srividya.j@etg.digital'}); // Replace with actual email
         mail.setSubject('RCA Map Attributes Batch - Errors Report');
         mail.setPlainTextBody('The following errors occurred during batch processing:\n\n' + String.join(errors, '\n'));
         try {
