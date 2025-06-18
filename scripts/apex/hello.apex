@@ -20,7 +20,7 @@ Database.executeBatch(batch);
 RCA_PricebookBatch batch = new RCA_PricebookBatch(new List<Id>{'01tKj00000QXVfjIAH'});
 Database.executeBatch(batch);
 
-RCA_PricebookBatchVersion2 batch = new RCA_PricebookBatchVersion2(new List<Id>{'01tKj00000QXVzNIAX'});
+RCA_PricebookBatchVersion2 batch = new RCA_PricebookBatchVersion2(new List<Id>{'01tKj00000QXVfjIAH'});
 Database.executeBatch(batch);
 
 RCA_DerivedPricingBatch batch = new RCA_DerivedPricingBatch(new List<Id>{ '01tKj00000QXYbVIAX'});
