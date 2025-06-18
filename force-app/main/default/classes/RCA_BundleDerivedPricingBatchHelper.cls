@@ -1,22 +1,23 @@
-public class RCA_DerivedPricingHelper {
+public class RCA_BundleDerivedPricingBatchHelper {
 
-    public List<PricebookEntry> newBundlePBEs = new List<PricebookEntry>();
-    public List<PricebookEntry> newRCABundlePBEs = new List<PricebookEntry>();
-    public List<PricebookEntry> useExistingRCABundlePBEs = new List<PricebookEntry>();
+    private Map<String, Id> skuToProductIdMap = new Map<String, Id>();
+    private Map<Id, Id> bundleToBaseProductMap = new Map<Id, Id>();
+    private List<PricebookEntry> newBundlePBEs = new List<PricebookEntry>();
+    private List<PricebookEntry> newRCABundlePBEs = new List<PricebookEntry>();
     public List<PricebookEntry> sourceRCABundlePBEs = new List<PricebookEntry>();
-    public List<String> errorMessages;
-
+    public List<PricebookEntry> useExistingRCABundlePBEs = new List<PricebookEntry>();
+    private List<PriceBookEntryDerivedPrice> derivedPrices = new List<PriceBookEntryDerivedPrice>();
+    public Map<Id, Product2> productIdToSubscriptionBaseMap = new Map<Id, Product2>();
+    Map<Id, List<PriceBookEntry>> rcaExistingPBEKeys = new Map<Id, List<PriceBookEntry>>();
+    Map<Id, List<PriceBookEntry>> standardExistingPBEKeys = new Map<Id, List<PriceBookEntry>>();
+    public List<PriceBookEntryDerivedPrice> newDerivedPrices = new List<PriceBookEntryDerivedPrice>();
     private Id standardPricebook2Id;
     private Id rcaPricebook2Id;
     private Id oneTimeProductSellingModelId;
-    public Map<Id, Decimal> productIdToPercentMap = new Map<Id, Decimal>();
-    public Map<Id, Product2> productIdToSubscriptionBaseMap = new Map<Id, Product2>();
-    public List<PriceBookEntryDerivedPrice> newDerivedPrices = new List<PriceBookEntryDerivedPrice>();
-    Map<Id, List<PricebookEntry>> standardExistingPBEKeys = new Map<Id, List<PricebookEntry>>();
-    Map<Id, List<PricebookEntry>> rcaExistingPBEKeys = new Map<Id, List<PricebookEntry>>();
+    public List<String> errorMessages;
 
 
-    public RCA_DerivedPricingHelper(List<String> errorMessages) {
+    public RCA_BundleDerivedPricingBatchHelper(List<String> errorMessages) {
         this.errorMessages = errorMessages;
 
         try {
@@ -42,14 +43,37 @@ public class RCA_DerivedPricingHelper {
         insertDerivedPrices();
     }
 
-    public void collectPOTData(List<Product2> potProducts) {
-        for (Product2 p : potProducts) {
-            productIdToPercentMap.put(p.Id, p.SBQQ__SubscriptionPercent__c);
+
+    private void collectPOTData(List<Product2> potProducts) {
+
+        //Percentage mapping of CPQ products -
+        for (Product2 p : [
+            SELECT Id, StockKeepingUnit, SBQQ__SubscriptionPercent__c, SBQQ__SubscriptionBase__c, SBQQ__SubscriptionTarget__c 
+            FROM Product2 where 
+             StockKeepingUnit != null 
+                AND SBQQ__PricingMethod__c = 'Percent Of Total' 
+                AND SBQQ__SubscriptionPercent__c != null AND SBQQ__SubscriptionBase__c != null]) {
+
+            skuToProductIdMap.put(p.StockKeepingUnit, p.Id);
+            // productIdToPercentMap.put(p.Id, p.SBQQ__SubscriptionPercent__c);
             productIdToSubscriptionBaseMap.put(p.Id, p);
         }
+
+        //Map of new Bundle Id's to Old Bundle Id's - 
+        for(Product2 pd: potProducts){
+            if (pd.StockKeepingUnit != null) {
+                String baseSku = pd.StockKeepingUnit.replace(' - Bundle', '');
+    
+                if (skuToProductIdMap.containsKey(baseSku)) {
+                    Id baseId = skuToProductIdMap.get(baseSku);
+                    bundleToBaseProductMap.put(pd.Id, baseId);
+                }
+            }    
+        }
+
     }
 
-
+    //Create PBE for standard and RCA pricebooks for Derived fields - 
     public void insertNewPBEs(List<Product2> potProducts) {
         
         // Step 1: Collect existing PBEs
@@ -167,7 +191,8 @@ public class RCA_DerivedPricingHelper {
     }
     
 
-    public void createDerivedPricesForNewPBEs() {
+    //Creating derived prices for bundles new Bundles - 
+    private void createDerivedPricesForNewPBEs() {
 
         if(!useExistingRCABundlePBEs.isEmpty()) newRCABundlePBEs.addAll(useExistingRCABundlePBEs);
 
@@ -189,16 +214,18 @@ public class RCA_DerivedPricingHelper {
                 existingDerivedPriceMap.put(existing.PricebookEntryId, existing);
             }
         }
-        
+
         for (PricebookEntry entry : newRCABundlePBEs) {
 
             if (existingDerivedPriceMap.containsKey(entry.Id)) {
                 // Skip if already exists
                 continue;
             }
-            
-            Decimal percent = productIdToPercentMap.get(entry.Product2Id);
-            Product2 product = productIdToSubscriptionBaseMap.get(entry.Product2Id);
+
+            Id baseId = bundleToBaseProductMap.get(entry.Product2Id);
+            // Decimal percent = productIdToPercentMap.get(baseId);
+            Decimal percent = productIdToSubscriptionBaseMap.get(baseId).SBQQ__SubscriptionPercent__c;
+            Product2 product = productIdToSubscriptionBaseMap.get(baseId);
 
             if (percent == null || product == null || product.SBQQ__SubscriptionBase__c == null) {
                 errorMessages.add('Missing subscription data for product: ' + entry.Product2Id);
@@ -207,7 +234,7 @@ public class RCA_DerivedPricingHelper {
 
             String formula = '';
             String source = '';
-
+            
             if (product.SBQQ__SubscriptionBase__c == 'Net') {
                 source = 'Header';
                 formula = 'HeaderTotal * ' + String.valueOf(percent / 100);
@@ -226,7 +253,7 @@ public class RCA_DerivedPricingHelper {
             );
 
             if (source == 'Product') {
-                getSourceProductPriceBook(product.SBQQ__SubscriptionTarget__c); // Create same PriceBook for Source product also
+                getSourceProductPriceBook(product.SBQQ__SubscriptionTarget__c); 
                 insertPBEs(sourceRCABundlePBEs, 'Source RCA');
                 dp.ContributingProductId = product.SBQQ__SubscriptionTarget__c;
             }
@@ -248,11 +275,6 @@ public class RCA_DerivedPricingHelper {
                 errorMessages.add('Exception inserting derived prices: ' + e.getMessage());
             }
         }
-    }
-
-    private Id getPSMOOrDefault(Id productId) {
-        String psmoId = createPSMO(productId);
-        return psmoId != null ? psmoId : oneTimeProductSellingModelId; // Remove this reference
     }
 
     private void getSourceProductPriceBook(Id productId){
@@ -300,13 +322,8 @@ public class RCA_DerivedPricingHelper {
     private Id createPSMO(Id productId) {
         try {
             // Check if One Time PSMO already exists for the product
-            List<ProductSellingModelOption> existingPSMOs = [
-                SELECT ProductSellingModelId 
-                FROM ProductSellingModelOption 
-                WHERE Product2Id = :productId 
-                  AND ProductSellingModel.Name = 'One Time'
-                LIMIT 1
-            ];
+            List<ProductSellingModelOption> existingPSMOs = [SELECT ProductSellingModelId FROM ProductSellingModelOption 
+                WHERE Product2Id = :productId AND ProductSellingModel.Name = 'One Time'LIMIT 1];
     
             if (!existingPSMOs.isEmpty()) {
                 return existingPSMOs[0].ProductSellingModelId;
@@ -332,6 +349,9 @@ public class RCA_DerivedPricingHelper {
     private Id getProductSellingModelId() {
         return oneTimeProductSellingModelId;
     }
-    
-    
+
+    private Id getPSMOOrDefault(Id productId) {
+        String psmoId = createPSMO(productId);
+        return psmoId != null ? psmoId : oneTimeProductSellingModelId; // Remove this reference
+    }
 }

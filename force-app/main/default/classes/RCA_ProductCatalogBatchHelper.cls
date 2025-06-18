@@ -1,12 +1,12 @@
 public class RCA_ProductCatalogBatchHelper {
-    
 
     public static final String DEFAULT_CATEGORY_NAME = 'Default category';
+    public static final String DEFAULT_CATALOG_NAME  = 'Default Catalog';
     public static final String REL_TYPE              = 'Bundle';
     public static final String REL_TYPE_NAME         = 'BundleComponent';
     public static final String COMMON_GROUP_NAME     = 'Others';
     public static final Integer DEFAULT_MAX_COMPONENTS = 999;
-    // Test‐injection flags to force each helper step to throw an exception
+
     @TestVisible
     public static Boolean throwExceptionInBuildProducts = false;
     @TestVisible
@@ -16,19 +16,43 @@ public class RCA_ProductCatalogBatchHelper {
     @TestVisible
     public static Boolean throwExceptionAssignCategories = false;
 
-
     // Fetch default config values used in component relationships and categories
     public static Map<String, Id> initializeConfigIds() {
-
-        //Map of default Categories - 
         Map<String, Id> config = new Map<String, Id>();
-        config.put('defaultCategoryId', [SELECT Id FROM ProductCategory WHERE Name = :DEFAULT_CATEGORY_NAME LIMIT 1].Id);
-
-        //Map of default RelationshipType Id -
-        config.put('relationshipTypeId', [SELECT Id FROM ProductRelationshipType WHERE AssociatedProductRoleCat = :REL_TYPE_NAME AND MainProductRoleCat = :REL_TYPE LIMIT 1].Id);
-
+    
+        // Step 1: Get or create default catalog
+        ProductCatalog catalog;
+        List<ProductCatalog> catalogs = [SELECT Id FROM ProductCatalog WHERE Name = :DEFAULT_CATALOG_NAME LIMIT 1];
+        if (catalogs.isEmpty()) {
+            catalog = new ProductCatalog(Name = DEFAULT_CATALOG_NAME);
+            insert catalog;
+        } else {
+            catalog = catalogs[0];
+        }
+    
+        // Step 2: Get or create default category
+        ProductCategory category;
+        List<ProductCategory> categories = [SELECT Id FROM ProductCategory WHERE Name = :DEFAULT_CATEGORY_NAME LIMIT 1 ];
+        if (categories.isEmpty()) {
+            category = new ProductCategory(Name = DEFAULT_CATEGORY_NAME, CatalogId = catalog.Id);
+            insert category;
+        } else {
+            category = categories[0];
+        }
+        config.put('defaultCategoryId', category.Id);
+    
+        // Step 3: Get relationship type safely
+        List<ProductRelationshipType> relTypes = [SELECT Id FROM ProductRelationshipType WHERE AssociatedProductRoleCat = :REL_TYPE_NAME 
+              AND MainProductRoleCat = :REL_TYPE  LIMIT 1];
+        if (relTypes.isEmpty()) {
+            throw new AuraHandledException('Missing ProductRelationshipType with required role categories.');
+        } else {
+            config.put('relationshipTypeId', relTypes[0].Id);
+        }
+    
         return config;
     }
+    
     
 
     // Fetch features from related child records (expecting loaded relationship)
@@ -85,13 +109,18 @@ public class RCA_ProductCatalogBatchHelper {
             if (hasFeatures || hasOptions) {
                 String skuBase = String.isBlank(product.StockKeepingUnit) ? prefix : product.StockKeepingUnit;
 
+                //Added CPQ field for Derived Prices batch class migration
                 Product2 bundle = new Product2(
                     Name = product.Name,
                     ProductCode = (product.ProductCode != null ? product.ProductCode : '') + ' - Bundle',
                     IsActive = product.IsActive,
                     ConfigureDuringSale = product.SBQQ__ConfigurationType__c == null ? 'Allowed' : product.SBQQ__ConfigurationType__c,
                     Type = 'Bundle',
-                    StockKeepingUnit = skuBase + ' - Bundle'
+                    StockKeepingUnit = skuBase + ' - Bundle',
+                    SBQQ__SubscriptionPercent__c = product.SBQQ__SubscriptionPercent__c,
+                    SBQQ__SubscriptionTarget__c = product.SBQQ__SubscriptionTarget__c,
+                    SBQQ__SubscriptionBase__c = product.SBQQ__SubscriptionBase__c,
+                    SBQQ__PricingMethod__c = product.SBQQ__PricingMethod__c 
                 );
 
                 newProducts.add(bundle);
@@ -183,11 +212,11 @@ public class RCA_ProductCatalogBatchHelper {
      * Accepts resolved bundles map: Map<Id (origProductId), Product2 (new bundle)>
      */
     public static List<ProductComponentGroup> buildComponentGroups(
-    Map<Id, Product2> resolvedOrigCPQToNewBundle,
-    Map<Id, List<SBQQ__ProductFeature__c>> featureMap,
-    Map<Id, Product2> allOrigCPQToNewBundleMap,
-    Map<String, Product2> insertedProductMap,
-    Map<Id, List<SBQQ__ProductOption__c>> optionMap) {
+        Map<Id, Product2> resolvedOrigCPQToNewBundle,
+        Map<Id, List<SBQQ__ProductFeature__c>> featureMap,
+        Map<Id, Product2> allOrigCPQToNewBundleMap,
+        Map<String, Product2> insertedProductMap,
+        Map<Id, List<SBQQ__ProductOption__c>> optionMap) {
 
     if (throwExceptionComponentsGroups) {
         throw new AuraHandledException('Simulated exception in buildRelatedComponents');
