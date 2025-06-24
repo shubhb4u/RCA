@@ -7,19 +7,13 @@ global class RCA_ProductCatalogBatch implements Database.Batchable<SObject>, Dat
     private List<Id> productIds;
     @TestVisible
     public List<SObject> failedRecords = new List<SObject>();
-    
 
-    // Default constructor
     global RCA_ProductCatalogBatch() {}
-
-    // Parameterized Constructor to allow selective execution by product IDs
     global RCA_ProductCatalogBatch(List<Id> productIds) {
         this.productIds = productIds;
     }
 
-    // Query products that need processing (optionally filtered by productIds)
     global Database.QueryLocator start(Database.BatchableContext bc) {
-
         String query = 'SELECT Id, Name, ProductCode, IsActive, SBQQ__ConfigurationType__c, SBQQ__Component__c, StockKeepingUnit, RecordTypeId,SBQQ__SubscriptionPercent__c, SBQQ__SubscriptionBase__c, SBQQ__SubscriptionTarget__c, SBQQ__PricingMethod__c, '
                      + '(SELECT Id, SBQQ__OptionalSKU__c, SBQQ__Number__c, SBQQ__Selected__c, SBQQ__Required__c, SBQQ__Quantity__c, '
                      + 'SBQQ__Feature__c, SBQQ__ConfiguredSKU__c, SBQQ__Feature__r.Name, SBQQ__QuantityEditable__c, SBQQ__MinQuantity__c, SBQQ__MaxQuantity__c, SBQQ__Bundled__c FROM SBQQ__Options__r), '
@@ -33,116 +27,87 @@ global class RCA_ProductCatalogBatch implements Database.Batchable<SObject>, Dat
         return Database.getQueryLocator(query);
     }
 
-    // Core logic for product transformation and creation of related data
     global void execute(Database.BatchableContext bc, List<Product2> cpqProducts) {
 
         List<Product2> allNewProducts = new List<Product2>();
         List<Product2> allUpdatedProducts = new List<Product2>();
         List<ProductComponentGroup> allGroups = new List<ProductComponentGroup>();
         List<ProductRelatedComponent> allComponents = new List<ProductRelatedComponent>();
-        Map<Id, Product2> allOrigCPQToNewBundleMap = new  Map<Id, Product2>();
-        
+        Map<Id, Product2> allOrigCPQToNewBundleMap = new Map<Id, Product2>();
 
-        //(Prepare data) -> Initialize categories and ChildRelationshipTypeIds - 
-        Map<String, Id> config = RCA_ProductCatalogBatchHelper.initializeConfigIds();
-        defaultCategoryId = config.get('defaultCategoryId');
-        relationshipTypeId = config.get('relationshipTypeId');
-
-
-        // (Prepare data) -> Fetch CPQ Product Features and Product Options - 
-        Map<Id, List<SBQQ__ProductFeature__c>> featureMap = RCA_ProductCatalogBatchHelper.fetchFeatures(cpqProducts);
-        Map<Id, List<SBQQ__ProductOption__c>> optionMap = RCA_ProductCatalogBatchHelper.fetchOptions(cpqProducts);
-
-
-        //1. (Prepare data) -> Build new bundle products and update existing CPQ products, along with bundle mapping
         try {
-            RCA_ProductCatalogBatchHelper.buildProducts(cpqProducts, featureMap, optionMap, allNewProducts, allUpdatedProducts, allOrigCPQToNewBundleMap);
+            Map<String, Id> config = RCA_ProductCatalogBatchHelper.initializeConfigIds();
+            defaultCategoryId = config.get('defaultCategoryId');
+            relationshipTypeId = config.get('relationshipTypeId');
         } catch (Exception ex) {
-            errorMessages.add('Error during buildProducts: ' + ex.getMessage());
+            RCA_ErrorLogger.logError('RCA_ProductCatalogBatch', 'initializeConfigIds', ex.getMessage());
             return;
         }
 
-        //2.(DML) -> Insert new products and update existing ones - 
-        RCA_ProductCatalogBatchHelper.handleDmlOperation(allNewProducts, 'insert', 'Inserting Product2 failed', errorMessages, failedRecords);
+        Map<Id, List<SBQQ__ProductFeature__c>> featureMap = RCA_ProductCatalogBatchHelper.fetchFeatures(cpqProducts);
+        Map<Id, List<SBQQ__ProductOption__c>> optionMap = RCA_ProductCatalogBatchHelper.fetchOptions(cpqProducts);
 
-        //3. (DML) -> Update existing ones - 
+        try {
+            RCA_ProductCatalogBatchHelper.buildProducts(cpqProducts, featureMap, optionMap, allNewProducts, allUpdatedProducts, allOrigCPQToNewBundleMap);
+        } catch (Exception ex) {
+            RCA_ErrorLogger.logError('RCA_ProductCatalogBatch', 'buildProducts', ex.getMessage());
+            return;
+        }
+
+        RCA_ProductCatalogBatchHelper.handleDmlOperation(allNewProducts, 'insert', 'Inserting Product2 failed', errorMessages, failedRecords);
         RCA_ProductCatalogBatchHelper.handleDmlOperation(allUpdatedProducts, 'update', 'Updating Product2 failed', errorMessages, failedRecords);
 
-        //4.(Prepare data) -> Build map of newly inserted products by SKU for later reference
         Map<String, Product2> insertedProductMap = new Map<String, Product2>();
         try {
             RCA_ProductCatalogBatchHelper.buildNewProductsMap(allNewProducts, insertedProductMap);
         } catch (Exception ex) {
-            errorMessages.add('Error during building New Products Map: ' + ex.getMessage());
+            RCA_ErrorLogger.logError('RCA_ProductCatalogBatch', 'buildNewProductsMap', ex.getMessage());
             return;
         }
 
-        //5. (Prepare data) -> Build ProductComponentGroup records for each CPQ product bundle
         Map<Id, Product2> resolvedOrigCPQToNewBundle = new Map<Id, Product2>();
         try {
             List<ProductComponentGroup> groups = RCA_ProductCatalogBatchHelper.buildComponentGroups(resolvedOrigCPQToNewBundle, featureMap, allOrigCPQToNewBundleMap, insertedProductMap, optionMap);
             allGroups.addAll(groups);
         } catch (Exception ex) {
-            errorMessages.add('Error during building New ProductComponentGroup: ' + ex.getMessage());
+            RCA_ErrorLogger.logError('RCA_ProductCatalogBatch', 'buildComponentGroups', ex.getMessage());
             return;
         }
 
-        //6. (DML) -> Insert ProductComponentGroupgroups and collect their IDs
         RCA_ProductCatalogBatchHelper.handleDmlOperation(allGroups, 'insert', 'Inserting ProductComponentGroup failed', errorMessages, failedRecords);
 
-        //7.(Prepare data) -> Build related components using inserted product and group IDs
         Map<Id, Product2> resolvedOrigCPQOptionsToNewBundle = new Map<Id, Product2>();
         try {
             List<ProductRelatedComponent> components = RCA_ProductCatalogBatchHelper.buildRelatedComponents(resolvedOrigCPQOptionsToNewBundle, optionMap, allGroups, relationshipTypeId, allOrigCPQToNewBundleMap, insertedProductMap);
             allComponents.addAll(components);
         } catch (Exception ex) {
-            errorMessages.add('Error during building New ProductRelatedComponent: ' + ex.getMessage());
+            RCA_ErrorLogger.logError('RCA_ProductCatalogBatch', 'buildRelatedComponents', ex.getMessage());
             return;
         }
-        
-        //8. (DML) -> Insert all related components
+
         RCA_ProductCatalogBatchHelper.handleDmlOperation(allComponents, 'insert', 'Inserting ProductRelatedComponent failed', errorMessages, failedRecords);
 
-        //9. (Prepare data) -> Build category links for each CPQ product bundle
         List<ProductCategoryProduct> allCategoryLinks = new List<ProductCategoryProduct>();
         try {
-            List<ProductCategoryProduct> links = RCA_ProductCatalogBatchHelper.assignCategory(
-            defaultCategoryId, cpqProducts, allOrigCPQToNewBundleMap, insertedProductMap );
+            List<ProductCategoryProduct> links = RCA_ProductCatalogBatchHelper.assignCategory(defaultCategoryId, cpqProducts, allOrigCPQToNewBundleMap, insertedProductMap);
             allCategoryLinks.addAll(links);
         } catch (Exception ex) {
-            errorMessages.add('Error during building New Category Links: ' + ex.getMessage());
+            RCA_ErrorLogger.logError('RCA_ProductCatalogBatch', 'assignCategory', ex.getMessage());
             return;
         }
 
-        //10. (DML) -> Insert category links
         RCA_ProductCatalogBatchHelper.handleDmlOperation(allCategoryLinks, 'insert', 'Category Assignment failed', errorMessages, failedRecords);
-        
-
-        //11.(DML) -> Finally mark source CPQ products as processed
         RCA_ProductCatalogBatchHelper.markProductsProcessed(cpqProducts, errorMessages, failedRecords);
 
-        // 12.(DML) -> Immediately roll back any child‐level failures
         if (!errorMessages.isEmpty()) {
             try {
                 RCA_ProductCatalogBatchHelper.rollbackFailedCPQHierarchy(failedRecords, errorMessages);
             } catch (Exception ex) {
-                System.debug('Exception during in‐chunk rollback: ' + ex.getMessage());
+                RCA_ErrorLogger.logError('RCA_ProductCatalogBatch', 'rollbackFailedCPQHierarchy', ex.getMessage());
             }
         }
     }
 
-    // Send an error notification after the batch completes
     global void finish(Database.BatchableContext bc) {
-
-        if (!errorMessages.isEmpty()) {
-    
-            try {
-                RCA_ProductCatalogBatchHelper.sendErrorNotification(errorMessages);
-    
-            } catch (Exception ex) {
-                System.debug('Exception while handling finish logic: ' + ex.getMessage());
-            }
-        }
     }
-
 }

@@ -53,7 +53,6 @@ public class RCA_ProductCatalogBatchHelper {
         return config;
     }
     
-    
 
     // Fetch features from related child records (expecting loaded relationship)
     public static Map<Id, List<SBQQ__ProductFeature__c>> fetchFeatures(List<Product2> CPQproducts) {
@@ -160,6 +159,8 @@ public class RCA_ProductCatalogBatchHelper {
         Map<String, Product2> insertedProductMap) {
 
         if (throwExceptionAssignCategories) {
+            String message = 'Simulated exception in assignCategory';
+            RCA_ErrorLogger.logError('RCA_ProductCatalogBatchHelper', 'assignCategory', message);
             throw new AuraHandledException('Simulated exception in assignCategory');
         }
 
@@ -219,6 +220,8 @@ public class RCA_ProductCatalogBatchHelper {
         Map<Id, List<SBQQ__ProductOption__c>> optionMap) {
 
     if (throwExceptionComponentsGroups) {
+        String message = 'Simulated exception in buildComponentGroups';
+        RCA_ErrorLogger.logError('RCA_ProductCatalogBatchHelper', 'buildComponentGroups', message);
         throw new AuraHandledException('Simulated exception in buildRelatedComponents');
     }
 
@@ -317,6 +320,8 @@ public class RCA_ProductCatalogBatchHelper {
         Map<String, Product2> insertedProductMap
     ) {
         if (throwExceptionInBuildRelatedComponents) {
+            String message = 'Simulated exception in buildRelatedComponents';
+            RCA_ErrorLogger.logError('RCA_ProductCatalogBatchHelper', 'buildRelatedComponents', message);
             throw new AuraHandledException('Simulated exception in buildRelatedComponents');
         }
 
@@ -422,31 +427,44 @@ public class RCA_ProductCatalogBatchHelper {
     
 
     // Generic method to handle insert/update DMLs with error logging
-    public static void handleDmlOperation(List<SObject> records, String operation, String errorContext, List<String> errorMessages, List<SObject> failedRecords) {
+    public static void handleDmlOperation(List<SObject> records,String operation,String errorContext,List<String> errorMessages,
+    List<SObject> failedRecords) {
         if (records.isEmpty()) return;
-    
+
         try {
             System.debug('records getting inserted -->> ' + records);
             Database.SaveResult[] results = (operation == 'insert') ? Database.insert(records, false) : Database.update(records, false);
-    
+
             for (Integer i = 0; i < results.size(); i++) {
                 if (!results[i].isSuccess()) {
                     SObject record = records[i];
                     String objectType = record.getSObjectType().getDescribe().getName();
-                    String fullErrorContext = errorContext + ' | Object: ' + objectType ;
-                    String CPQErrorRecord = getFailedRecordDetail(record);
-                    errorMessages.add(RCA_BatchExceptionLogger.logException(
-                        'RCA_ProductCatalogBatch', fullErrorContext,
-                        record, results[i].getErrors()[0], CPQErrorRecord
-                    ));
-                    
+                    String fullErrorContext = errorContext;
+                    String cpqErrorDetail = getFailedRecordDetail(record);
+
+                    // Capture a detailed error message string
+                    String detailedMessage = RCA_BatchExceptionLogger.logException(
+                        'RCA_ProductCatalogBatch',
+                        fullErrorContext,
+                        objectType,
+                        results[i].getErrors()[0],
+                        cpqErrorDetail
+                    );
+
+                    // Add to in-memory list
+                    errorMessages.add(detailedMessage);
+
                     failedRecords.add(record);
                 }
             }
+
         } catch (Exception e) {
-            errorMessages.add(errorContext + ' - Unexpected DML error: ' + e.getMessage());
+            String fallbackError = errorContext + ' - Unexpected DML error: ' + e.getMessage();
+            errorMessages.add(fallbackError);
+            RCA_ErrorLogger.logError('RCA_ProductCatalogBatch', 'handleDmlOperation', fallbackError);
         }
     }
+
 
     //Add details in error email about CPQ records which might be the root cause of the error - 
     public static String getFailedRecordDetail(SObject failedRecord) {
@@ -532,18 +550,20 @@ public class RCA_ProductCatalogBatchHelper {
             }
     
         } catch (Exception e) {
-            errorMessages.add('Rollback deletion failed: ' + e.getMessage());
+            String errMsg = 'Rollback deletion failed: ' + e.getMessage();
+            errorMessages.add(errMsg);
             System.debug('Rollback exception: ' + e.getMessage());
+            RCA_ErrorLogger.logError('RCA_ProductCatalogBatchHelper', 'rollbackFailedCPQHierarchy', errMsg);
         }
     }
     
     // Email errors to system administrator
-    public static void sendErrorNotification(List<String> errorMessages) {
-        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-        mail.setToAddresses(new String[] { 'Shubham.m@etg.digital' });
-        mail.setSubject('RCA Product Catalog Batch Process Errors');
-        mail.setPlainTextBody('RCA_ProductCatalogBatch class failed:\n' + String.join(errorMessages, '\n'));
-        Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
-    }
+    // public static void sendErrorNotification(List<String> errorMessages) {
+    //     Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+    //     mail.setToAddresses(new String[] { 'Shubham.m@etg.digital' });
+    //     mail.setSubject('RCA Product Catalog Batch Process Errors');
+    //     mail.setPlainTextBody('RCA_ProductCatalogBatch class failed:\n' + String.join(errorMessages, '\n'));
+    //     Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
+    // }
     
 }

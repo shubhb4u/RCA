@@ -9,9 +9,8 @@ string tempvar = 'Enter_your_name_here';
 System.debug('Hello World!');
 System.debug('My name is ' + tempvar);
 
-RCA_ProductCatalogBatch batch = new RCA_ProductCatalogBatch(new List<Id>{'01tKj00000QXTgTIAX'});
+RCA_ProductCatalogBatch batch = new RCA_ProductCatalogBatch(new List<Id>{'01tKj00000QXEQOIA5', '01tKj00000QXVftIAH'});
 Database.executeBatch(batch);
-
 
 
 RCA_MapAttributesFromCPQToRCABatch batch = new RCA_MapAttributesFromCPQToRCABatch(new List<Id>{'01tKj00000QXVuTIAX', '01tKj00000QXWGbIAP'});
@@ -27,5 +26,8 @@ RCA_DerivedPricingBatch batch = new RCA_DerivedPricingBatch(new List<Id>{ '01tKj
 Database.executeBatch(batch);
 
 RCA_BundleDerivedPricingBatch batch = new RCA_BundleDerivedPricingBatch(new List<Id>{ '01tKj00000QXYCUIA5'});
+Database.executeBatch(batch);
+
+RCA_CostBookBatch batch = new RCA_CostBookBatch(new List<Id>{ '01tKj00000QXQHbIAP'});
 Database.executeBatch(batch);
 
