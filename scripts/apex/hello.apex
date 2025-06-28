@@ -16,11 +16,10 @@ Database.executeBatch(batch);
 RCA_MapAttributesFromCPQToRCABatch batch = new RCA_MapAttributesFromCPQToRCABatch(new List<Id>{'01tKj00000QXVuTIAX', '01tKj00000QXWGbIAP'});
 Database.executeBatch(batch);
 
-RCA_PricebookBatch batch = new RCA_PricebookBatch(new List<Id>{'01tKj00000QXVfjIAH'});
+
+RCA_PricebookBatchVersion2 batch = new RCA_PricebookBatchVersion2(new List<Id>{'01tKj00000QXLuuIAH'});
 Database.executeBatch(batch);
 
-RCA_PricebookBatchVersion2 batch = new RCA_PricebookBatchVersion2(new List<Id>{'01tKj00000QXVzNIAX'});
-Database.executeBatch(batch);
 
 RCA_DerivedPricingBatch batch = new RCA_DerivedPricingBatch(new List<Id>{ '01tKj00000QXYbVIAX'});
 Database.executeBatch(batch);

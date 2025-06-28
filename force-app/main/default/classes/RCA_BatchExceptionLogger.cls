@@ -1,42 +1,64 @@
 public class RCA_BatchExceptionLogger {
 
-    @TestVisible
-    public static List<String> testErrors = new List<String>();
+    private static List<Batch_Error_Log__c> logsToInsert = new List<Batch_Error_Log__c>();
 
-    public static String logException(String className, String context, String sObjectType, Database.Error error, String CPQErrorRecord) {
-        String errorMsg = '\n[Message: ' + error.getMessage()
-                        + '\n'
-                        + '\n[*** CPQ source record: *** ' + CPQErrorRecord + ']' + '\n';
+    public static void logExceptions(String className, String context, String sObjectType, List<Database.Error> errors, String CPQErrorRecord) {
+        
+        if (errors == null || errors.isEmpty()) {
+            String fallbackMsg =  + CPQErrorRecord ;
+            if (Test.isRunningTest()) {
+                testErrors.add(fallbackMsg);
+            }
 
-        if (error.getStatusCode() != null) {
-            errorMsg += '\n[StatusCode: ' + error.getStatusCode() + ']' + '\n';
+            logsToInsert.add(new Batch_Error_Log__c(
+                Batch_Class_Name__c = className,
+                Method_Name__c = context,
+                Error_Message__c = fallbackMsg,
+                SObject_Type__c = sObjectType
+            ));
+            return;
         }
 
-        if (error.getFields() != null && !error.getFields().isEmpty()) {
-            errorMsg += '\n[Fields: ' + String.join(error.getFields(), ',') + ']';
-            
-        }
+        for (Database.Error error : errors) {
+            String errorMsg =  error.getMessage()
+                            + '\n' + CPQErrorRecord + '\n';
 
-        // Capture in static list only during test
-        if (Test.isRunningTest()) {
-            testErrors.add(errorMsg);
-        }
+            if (error.getStatusCode() != null) {
+                errorMsg += 'StatusCode: ' + error.getStatusCode() + '\n';
+            }
+            if (error.getFields() != null && !error.getFields().isEmpty()) {
+                errorMsg += 'Fields: ' + String.join(error.getFields(), ',') + '\n';
+            }
 
-        System.debug(LoggingLevel.ERROR, errorMsg);
+            if (Test.isRunningTest()) {
+                testErrors.add(errorMsg);
+            }
 
-        try {
-            Batch_Error_Log__c log = new Batch_Error_Log__c(
+            logsToInsert.add(new Batch_Error_Log__c(
                 Batch_Class_Name__c = className,
                 Method_Name__c = context,
                 Error_Message__c = errorMsg,
                 SObject_Type__c = sObjectType
-            );
-            insert log;
-        } catch (Exception e) {
-            // You could add fallback debug or monitoring here if logging fails.
-            System.debug('Failed to log error: ' + e.getMessage());
+            ));
         }
-
-        return errorMsg;
     }
+
+    public static void flushLogs() {
+        if (!logsToInsert.isEmpty()) {
+            try {
+                insert logsToInsert;
+                System.debug('### Inserted logs: ' + logsToInsert.size());
+            } catch (Exception e) {
+                System.debug('Failed to flush error logs: ' + e.getMessage());
+            } finally {
+                logsToInsert.clear();
+            }
+        } else {
+            System.debug('### No logs to insert.');
+        }
+    }
+    
+
+    @TestVisible
+    public static List<String> testErrors = new List<String>();
 }

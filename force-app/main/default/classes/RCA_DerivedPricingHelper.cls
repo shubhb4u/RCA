@@ -16,14 +16,16 @@ public class RCA_DerivedPricingHelper {
     Map<Id, List<PricebookEntry>> rcaExistingPBEKeys = new Map<Id, List<PricebookEntry>>();
 
 
-    public RCA_DerivedPricingHelper(List<String> errorMessages) {
-        this.errorMessages = errorMessages;
+    public RCA_DerivedPricingHelper() {
 
         try {
             Map<String, Id> pricebookMap = new Map<String, Id>();
             for (Pricebook2 pb : [SELECT Id, Name FROM Pricebook2 WHERE Name IN ('Standard Price Book', 'RCA_PriceBook')]) {
                 pricebookMap.put(pb.Name, pb.Id);
             }
+            //Introducing errors for testing here ------------------------------------------------------
+
+
 
             standardPricebook2Id = pricebookMap.get('Standard Price Book');
             rcaPricebook2Id = pricebookMap.get('RCA_PriceBook');
@@ -31,6 +33,7 @@ public class RCA_DerivedPricingHelper {
             oneTimeProductSellingModelId = [SELECT Id FROM ProductSellingModel WHERE Name = 'One Time' LIMIT 1].Id;
         } catch (Exception e) {
             errorMessages.add('Error initializing helper: ' + e.getMessage());
+            RCA_BatchExceptionLogger.logException('RCA_DerivedPricingHelper', context, 'Unknown', null, 'Error initializing helper: ' + e.getMessage());
         }
     }
 

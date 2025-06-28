@@ -1,7 +1,5 @@
 public class RCA_MapAttributesFromCPQToRCAHelper {
 
-    private List<String> errors; 
-
     // Stores picklist codes already present in the system
     private List<String> attrPicklistCodeList = new List<String>();
 
@@ -11,18 +9,17 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
     // Keeps track of product IDs being processed
     private Set<Id> productIds = new Set<Id>();
 
-    // Constructor accepts shared error list from batch
-    public RCA_MapAttributesFromCPQToRCAHelper(List<String> sharedErrorList) {
-        this.errors = sharedErrorList;
+    public RCA_MapAttributesFromCPQToRCAHelper() {
     }
+
 
     /**
      * Main entry point for processing a batch of Product2 records.
      */
-    public void process(List<Product2> scope) {
+    public void process(List<Product2> productList) {
 
         //Adding product Id's that are being processed - 
-        for (Product2 p : scope) {
+        for (Product2 p : productList) {
             productIds.add(p.Id);
         }
 
@@ -30,16 +27,19 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
         handleAttributePicklist();
 
         // Step 2: Create Product Classification records for each product
-        List<ProductClassification> prodClassfications = createProductClassifications(scope);
+        List<ProductClassification> prodClassfications = createProductClassifications(productList);
+        if(prodClassfications.isEmpty()) return;
 
         // Step 3: Create Attribute Definitions from Config Attributes
         List<AttributeDefinition> attributeDefs = createAttributeDefinitions( productIds);
+        if(attributeDefs.isEmpty()) return;
 
         // Step 4: Create junctions between Product Classifications and Attribute Definitions
         List<ProductClassificationAttr> classificationDefAttrs = createProductClassificationAttributes(prodClassfications, attributeDefs);
+        if(classificationDefAttrs.isEmpty()) return;
 
         // Step 5: Update Products with BasedOnId referring to their Classification
-        updateProductBasedOnClassifications(scope, prodClassfications, classificationDefAttrs);
+        updateProductBasedOnClassifications(productList, prodClassfications, classificationDefAttrs);
     }
 
     /**
@@ -130,8 +130,14 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
     private List<ProductClassification> createProductClassifications(List<Product2> products) {
 
         if (productIds.isEmpty()) {
-            errors.add('No ProductIds received !! ClassName:- RCA_MapAttributesFromCPQToRCAHelper  *** Method Name:- createProductClassifications');
-            throw  new AuraHandledException('No ProductIds received in method:- createProductClassifications');
+            RCA_BatchExceptionLogger.logException(
+                'RCA_MapAttributesFromCPQToRCABatch',
+                'createProductClassifications',
+                'Product2',
+                 null,
+                'No ProductIds received'
+            );
+            return new List<ProductClassification>();
         }
 
         List<ProductClassification> listToInsert = new List<ProductClassification>();
@@ -141,7 +147,13 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
         // Build all potential classification codes
         for (Product2 p : products) {
             if (String.isBlank(p.StockKeepingUnit)) {
-                errors.add('Missing StockKeepingUnit in method:- createProductClassifications for Product2 with Id: ' + p.Id + ', Name: ' + p.Name);
+                RCA_BatchExceptionLogger.logException(
+                'RCA_MapAttributesFromCPQToRCABatch',
+                'createProductClassifications',
+                'Product2',
+                 null,
+                 'Missing StockKeepingUnit for Product2 Id: ' + p.Id + ', Name: ' + p.Name
+                );
                 continue;
             }
             classificationCodes.add(p.StockKeepingUnit + '_CLASS');
@@ -158,11 +170,12 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
         ]) {
             existingClassifications.put(pc.Code, pc);
         }
+
     
         // Create new classifications if they don’t exist
         for (Product2 p : products) {
             if (String.isBlank(p.StockKeepingUnit)) {
-                continue; // Already logged above
+                continue; 
             }
         
             String code = p.StockKeepingUnit + '_CLASS';
@@ -193,10 +206,18 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
      * Creates AttributeDefinition records linked to product config attributes.
      */
     private List<AttributeDefinition> createAttributeDefinitions( Set<Id> productIds) {
+
+
         // Return early if no productIds found
         if (productIds.isEmpty()) {
-            errors.add('No ProductIds received !! ClassName:- RCA_MapAttributesFromCPQToRCAHelper  *** Method Name:- createAttributeDefinitions');
-            throw  new AuraHandledException('No ProductIds received in method:- createAttributeDefinitions');
+            RCA_BatchExceptionLogger.logException(
+                'RCA_MapAttributesFromCPQToRCABatch',
+                'createAttributeDefinitions',
+                'Product2',
+                 null,
+                'No ProductIds received'
+            );
+            return new List<AttributeDefinition>();
         }
         List<AttributeDefinition> listToInsert = new List<AttributeDefinition>();
         List<AttributeDefinition> resultList = new List<AttributeDefinition>();
@@ -210,14 +231,17 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
             WHERE SBQQ__Product__c IN :productIds
         ];
 
-        //----------------------------------------------------------------- Test negative scenario---------------
-        // configAttributes.clear();
 
         // Return early if no config attributes found
         if (configAttributes.isEmpty()) {
             for (Id pid : productIds) {
-                // errors.add('No Configuration Attributes found for Product: ' + pid);
-                errors.add('No Configuration Attributes found for Product: ' + pid+ ' ClassName:- RCA_MapAttributesFromCPQToRCAHelper  *** Method Name:- createProductClassificationAttributes');
+                RCA_BatchExceptionLogger.logException(
+                'RCA_MapAttributesFromCPQToRCABatch',
+                'createAttributeDefinitions',
+                'Product2',
+                 null,
+                 'No Configuration Attributes found for Product: ' + pid
+                );
             }
             return new List<AttributeDefinition>();
         }
@@ -226,7 +250,13 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
         // Step 1: Build all potential codes
         for (SBQQ__ConfigurationAttribute__c attr : configAttributes) {
             if (String.isBlank(attr.SBQQ__Product__r.StockKeepingUnit)) {
-                errors.add('Missing StockKeepingUnit in method:- createAttributeDefinitions for Product2 with Id: ' + attr.SBQQ__Product__c + ', Name: ' + attr.Name);
+                RCA_BatchExceptionLogger.logException(
+                'RCA_MapAttributesFromCPQToRCABatch',
+                'createAttributeDefinitions',
+                'Product2',
+                 null,
+                 'Missing StockKeepingUnit for Product2 with Id: ' + attr.SBQQ__Product__c + ', Name: ' + attr.Name
+                );
                 continue;
             }
             String apiName = attr.Name.replace(' ', '_');
@@ -252,6 +282,7 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
                 continue;
             }
             String targetFieldApiName = attr.SBQQ__TargetField__c;
+
     
             if (fieldsMap.containsKey(targetFieldApiName)) {
                 Schema.DescribeFieldResult fieldDescribe = fieldsMap.get(targetFieldApiName).getDescribe();
@@ -281,7 +312,7 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
                     listToInsert.add(def);
                     
                 } else {
-                    resultList.add(existingAttrDefs.get(code)); // Add existing to result
+                    resultList.add(existingAttrDefs.get(code)); 
                 }
             } else {
                 System.debug('Target field not found in ProductOption fields: ' + targetFieldApiName);
@@ -293,8 +324,7 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
             safeInsert(listToInsert);
         }
 
-        //-----------------------------------------Negative Test scenario------------------------
-        resultList.addAll(listToInsert); // Add new ones to result
+        resultList.addAll(listToInsert); 
     
         return resultList;
     }
@@ -305,9 +335,25 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
      */
     private List<ProductClassificationAttr> createProductClassificationAttributes(List<ProductClassification> classifications, List<AttributeDefinition> attrDefs) {
 
-        if(classifications.isEmpty() || attrDefs.isEmpty()){
-            errors.add('Classifications or attrDefs is empty !! ClassName:- RCA_MapAttributesFromCPQToRCAHelper  *** Method Name:- createProductClassificationAttributes');
-            throw new AuraHandledException('classifications or attrDefs is empty !!');
+        if(classifications.isEmpty()){
+            RCA_BatchExceptionLogger.logException(
+                'RCA_MapAttributesFromCPQToRCABatch',
+                'createProductClassificationAttributes',
+                'ProductClassification',
+                 null,
+                'classifications are empty !!'
+            );
+            return new List<ProductClassificationAttr>();
+        }
+        if(attrDefs.isEmpty()){
+            RCA_BatchExceptionLogger.logException(
+                'RCA_MapAttributesFromCPQToRCABatch',
+                'createProductClassificationAttributes',
+                'AttributeDefinition',
+                 null,
+                'attrDefs are empty !!'
+            );
+            return new List<ProductClassificationAttr>();
         }
         
         List<ProductClassificationAttr> listToInsert = new List<ProductClassificationAttr>();
@@ -318,6 +364,7 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
         Set<Id> attributeDefIds = new Set<Id>();
         for (ProductClassification pc : classifications) classificationIds.add(pc.Id);
         for (AttributeDefinition ad : attrDefs) attributeDefIds.add(ad.Id);
+
     
         // Query existing junctions
         Set<String> existingKeys = new Set<String>();
@@ -342,8 +389,13 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
                                 Name = ad.Name
                             ));
                         }else{
-                            errors.add('ProductClassificationId or AttributeDefinitionId is empty !! ClassName:- RCA_MapAttributesFromCPQToRCAHelper  *** Method Name:- createProductClassificationAttributes');
-                            throw new AuraHandledException('classifications or attrDefs is empty !!');
+                            RCA_BatchExceptionLogger.logException(
+                                'RCA_MapAttributesFromCPQToRCABatch',
+                                'createProductClassificationAttributes',
+                                'Product2',
+                                null,
+                                'ProductClassificationId or AttributeDefinitionId is empty !!'
+                            );
                         }
                         
                     }
@@ -365,9 +417,15 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
      */
     private void updateProductBasedOnClassifications(List<Product2> products, List<ProductClassification> classifications, List<ProductClassificationAttr> classificationAttrList ) {
 
-        if(classificationAttrList.isEmpty() || products.isEmpty() || classificationAttrList.isEmpty()){
-            errors.add('classificationAttrList or products or classificationAttrList is empty !! ClassName:- RCA_MapAttributesFromCPQToRCAHelper  *** Method Name:- updateProductBasedOnClassifications');
-            throw new AuraHandledException('classificationAttrList or products or classificationAttrList is empty !!');
+        if(classificationAttrList.isEmpty() ){
+            RCA_BatchExceptionLogger.logException(
+                'RCA_MapAttributesFromCPQToRCABatch',
+                'updateProductBasedOnClassifications',
+                'Product2',
+                 null,
+                'classificationAttrList or products or classificationAttrList is empty'
+            );
+            return;
         }
 
         Map<Id, List<ProductClassificationAttr>> classToAttrMap = new Map<Id, List<ProductClassificationAttr>>();
@@ -403,8 +461,13 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
                 skuToClassIdMap.put(sku, pc.Id);
             }
             else{
-                errors.add('classToAttrMap does not contain the Product classification !! + ProductClassificationId:- '+ pc.Id +'  ClassName:- RCA_MapAttributesFromCPQToRCAHelper  *** Method Name:- updateProductBasedOnClassifications');
-                throw new AuraHandledException('classToAttrMap does not contain the Product classification !! + ProductClassificationId:- '+ pc.Id +'  ClassName:- RCA_MapAttributesFromCPQToRCAHelper  *** Method Name:- updateProductBasedOnClassifications');
+                RCA_BatchExceptionLogger.logException(
+                'RCA_MapAttributesFromCPQToRCABatch',
+                'updateProductBasedOnClassifications',
+                'Product2',
+                 null,
+                'classToAttrMap does not contain the Product classification !! + ProductClassificationId:- '+ pc.Id +'  ClassName:- RCA_MapAttributesFromCPQToRCAHelper  *** Method Name:- updateProductBasedOnClassifications'
+                );
             }
         }
 
@@ -438,16 +501,24 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
     private void safeInsert(List<SObject> records) {
         if (records.isEmpty()) return;
     
-        Database.SaveResult[] results = Database.insert(records, false); // allOrNone = false
+        Database.SaveResult[] results = Database.insert(records, false); 
     
         for (Integer i = 0; i < results.size(); i++) {
             if (!results[i].isSuccess()) {
+                SObject record = records[i];
                 for (Database.Error err : results[i].getErrors()) {
-                    errors.add('Insert failed on record ' + i + ': ' + err.getMessage());
+                    RCA_BatchExceptionLogger.logException(
+                        'RCA_MapAttributesFromCPQToRCAHelper',
+                        'safeInsert',
+                        record.getSObjectType().getDescribe().getName(),
+                        err,
+                        String.valueOf(record.get('Id'))
+                    );
                 }
             }
         }
     }
+    
     
 
     /**
@@ -456,12 +527,19 @@ public class RCA_MapAttributesFromCPQToRCAHelper {
     private void safeUpdate(List<SObject> records) {
         if (records.isEmpty()) return;
     
-        Database.SaveResult[] results = Database.update(records, false); // allOrNone = false
+        Database.SaveResult[] results = Database.update(records, false);
     
         for (Integer i = 0; i < results.size(); i++) {
             if (!results[i].isSuccess()) {
+                SObject record = records[i];
                 for (Database.Error err : results[i].getErrors()) {
-                    errors.add('Update failed on record ' + i + ': ' + err.getMessage());
+                    RCA_BatchExceptionLogger.logException(
+                        'RCA_MapAttributesFromCPQToRCAHelper',
+                        'safeUpdate',
+                        record.getSObjectType().getDescribe().getName(),
+                        err,
+                        String.valueOf(record.get('Id'))
+                    );
                 }
             }
         }

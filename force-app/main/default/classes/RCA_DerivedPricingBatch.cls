@@ -2,15 +2,14 @@ global class RCA_DerivedPricingBatch implements Database.Batchable<SObject>, Dat
 
     private RCA_DerivedPricingHelper helper;
     private List<Id> productIds;
-    private List<String> errorMessages = new List<String>();
 
     public RCA_DerivedPricingBatch() {
-        this.helper = new RCA_DerivedPricingHelper(errorMessages);
+        this.helper = new RCA_DerivedPricingHelper();
     }
 
     public RCA_DerivedPricingBatch(List<Id> productIds) {
         this.productIds = productIds;
-        this.helper = new RCA_DerivedPricingHelper(errorMessages);
+        this.helper = new RCA_DerivedPricingHelper();
     }
 
     global Database.QueryLocator start(Database.BatchableContext BC) {
@@ -29,21 +28,7 @@ global class RCA_DerivedPricingBatch implements Database.Batchable<SObject>, Dat
     }
 
     global void finish(Database.BatchableContext BC) {
-        if (!errorMessages.isEmpty()) {
-            String subject = 'RCA Derived Pricing Batch Errors';
-            String body = 'The following errors occurred during the RCA Derived Pricing Batch:\n\n' + String.join(errorMessages, '\n');
-
-            // Send error email
-            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-            mail.setToAddresses(new String[] { 'Shubham.m@etg.digital' }); // <-- Change to your recipient
-            mail.setSubject(subject);
-            mail.setPlainTextBody(body);
-            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
-
-            System.debug('Errors during Derived Pricing Batch:\n' + body);
-        } else {
-            System.debug('RCA Derived Pricing Batch completed without errors.');
-        }
+        
 
     }
 }
