@@ -119,7 +119,10 @@ public class RCA_ProductCatalogBatchHelper {
                     SBQQ__SubscriptionPercent__c = product.SBQQ__SubscriptionPercent__c,
                     SBQQ__SubscriptionTarget__c = product.SBQQ__SubscriptionTarget__c,
                     SBQQ__SubscriptionBase__c = product.SBQQ__SubscriptionBase__c,
-                    SBQQ__PricingMethod__c = product.SBQQ__PricingMethod__c 
+                    SBQQ__PricingMethod__c = product.SBQQ__PricingMethod__c,
+                    SBQQ__SubscriptionType__c = product.SBQQ__SubscriptionType__c,
+                    SBQQ__SubscriptionTerm__c = product.SBQQ__SubscriptionTerm__c,
+                    SBQQ__SubscriptionPricing__c = product.SBQQ__SubscriptionPricing__c
                 );
 
                 newProducts.add(bundle);
@@ -159,8 +162,6 @@ public class RCA_ProductCatalogBatchHelper {
         Map<String, Product2> insertedProductMap) {
 
         if (throwExceptionAssignCategories) {
-            String message = 'Simulated exception in assignCategory';
-            RCA_ErrorLogger.logError('RCA_ProductCatalogBatchHelper', 'assignCategory', message);
             throw new AuraHandledException('Simulated exception in assignCategory');
         }
 
@@ -220,8 +221,6 @@ public class RCA_ProductCatalogBatchHelper {
         Map<Id, List<SBQQ__ProductOption__c>> optionMap) {
 
     if (throwExceptionComponentsGroups) {
-        String message = 'Simulated exception in buildComponentGroups';
-        RCA_ErrorLogger.logError('RCA_ProductCatalogBatchHelper', 'buildComponentGroups', message);
         throw new AuraHandledException('Simulated exception in buildRelatedComponents');
     }
 
@@ -320,8 +319,6 @@ public class RCA_ProductCatalogBatchHelper {
         Map<String, Product2> insertedProductMap
     ) {
         if (throwExceptionInBuildRelatedComponents) {
-            String message = 'Simulated exception in buildRelatedComponents';
-            RCA_ErrorLogger.logError('RCA_ProductCatalogBatchHelper', 'buildRelatedComponents', message);
             throw new AuraHandledException('Simulated exception in buildRelatedComponents');
         }
 
@@ -409,17 +406,12 @@ public class RCA_ProductCatalogBatchHelper {
         return relatedComponents;
     }
 
-
-
-
-    public static void markProductsProcessed(List<Product2> processedProducts, List<String> errorMessages, List<SObject> failedRecords) {
-        // If no related records failed, mark products as processed
+    public static void markProductsProcessed(List<Product2> processedProducts, List<SObject> failedRecords) {
         if (failedRecords.isEmpty()) {
             for (Product2 p : processedProducts) {
                 p.IsProcessed__c = true;
             }
-    
-            handleDmlOperation(processedProducts, 'update', 'Mark processed failed', errorMessages, failedRecords);
+            handleDmlOperation(processedProducts, 'update', 'Mark processed failed', failedRecords);
         } else {
             System.debug('Skipping mark processed due to failed records.');
         }
@@ -427,41 +419,44 @@ public class RCA_ProductCatalogBatchHelper {
     
 
     // Generic method to handle insert/update DMLs with error logging
-    public static void handleDmlOperation(List<SObject> records,String operation,String errorContext,List<String> errorMessages,
-    List<SObject> failedRecords) {
+    public static void handleDmlOperation(List<SObject> records, String operation, String errorContext, List<SObject> failedRecords) {
+        
         if (records.isEmpty()) return;
 
         try {
-            System.debug('records getting inserted -->> ' + records);
-            Database.SaveResult[] results = (operation == 'insert') ? Database.insert(records, false) : Database.update(records, false);
+            Database.SaveResult[] results = (operation == 'insert') 
+                ? Database.insert(records, false) 
+                : Database.update(records, false);
 
             for (Integer i = 0; i < results.size(); i++) {
                 if (!results[i].isSuccess()) {
                     SObject record = records[i];
-                    String objectType = record.getSObjectType().getDescribe().getName();
-                    String fullErrorContext = errorContext;
-                    String cpqErrorDetail = getFailedRecordDetail(record);
+                    String sObjectType = record.getSObjectType().getDescribe().getName();
+                    List<Database.Error> errors = new List<Database.Error>();
+                    errors.addAll(results[i].getErrors());
+                    String contextInfo = getFailedRecordDetail(record);
 
-                    // Capture a detailed error message string
-                    String detailedMessage = RCA_BatchExceptionLogger.logException(
+                    RCA_BatchExceptionLogger.logExceptions(
                         'RCA_ProductCatalogBatch',
-                        fullErrorContext,
-                        objectType,
-                        results[i].getErrors()[0],
-                        cpqErrorDetail
+                        errorContext,
+                        sObjectType,
+                        errors,
+                        contextInfo
                     );
-
-                    // Add to in-memory list
-                    errorMessages.add(detailedMessage);
-
+                    RCA_BatchExceptionLogger.flushLogs();
                     failedRecords.add(record);
                 }
             }
 
-        } catch (Exception e) {
-            String fallbackError = errorContext + ' - Unexpected DML error: ' + e.getMessage();
-            errorMessages.add(fallbackError);
-            RCA_ErrorLogger.logError('RCA_ProductCatalogBatch', 'handleDmlOperation', fallbackError);
+        } catch (Exception ex) {
+            RCA_BatchExceptionLogger.logExceptions(
+                'RCA_ProductCatalogBatch',
+                errorContext + ' - Unexpected DML error',
+                'SObject',
+                null,
+                ex.getMessage()
+            );
+            RCA_BatchExceptionLogger.flushLogs();
         }
     }
 
@@ -511,35 +506,26 @@ public class RCA_ProductCatalogBatchHelper {
     
 
     //Rollback/Delete all failed parent records created in the  prcess to reduce manual deletion effort- 
-    public static void rollbackFailedCPQHierarchy(List<SObject> failedRecords, List<String> errorMessages) {
+    public static void rollbackFailedCPQHierarchy(List<SObject> failedRecords) {
         Set<Id> productIdsToDelete = new Set<Id>();
     
-        // Collect ParentProductIds from failed records
         for (SObject rec : failedRecords) {
             String sObjectName = rec.getSObjectType().getDescribe().getName();
-    
-            if (sObjectName != 'Product2') {
-                if (rec.get('ParentProductId') != null) {
-                    productIdsToDelete.add((Id)rec.get('ParentProductId'));
-                }
+            if (sObjectName != 'Product2' && rec.get('ParentProductId') != null) {
+                productIdsToDelete.add((Id) rec.get('ParentProductId'));
             }
         }
     
         try {
-            // Step 1: Delete component groups
             if (!productIdsToDelete.isEmpty()) {
                 List<ProductComponentGroup> groupsToDelete = [
                     SELECT Id FROM ProductComponentGroup WHERE ParentProductId IN :productIdsToDelete
                 ];
-
                 if (!groupsToDelete.isEmpty()) {
                     delete groupsToDelete;
                     System.debug('Deleted ProductComponentGroups: ' + groupsToDelete.size());
                 }
-            }
     
-            // Step 3: Delete new bundle products that failed or whose child records failed
-            if (!productIdsToDelete.isEmpty()) {
                 List<Product2> productsToDelete = [
                     SELECT Id FROM Product2 WHERE Id IN :productIdsToDelete
                 ];
@@ -548,22 +534,16 @@ public class RCA_ProductCatalogBatchHelper {
                     System.debug('Deleted Product2 records: ' + productsToDelete.size());
                 }
             }
-    
-        } catch (Exception e) {
-            String errMsg = 'Rollback deletion failed: ' + e.getMessage();
-            errorMessages.add(errMsg);
-            System.debug('Rollback exception: ' + e.getMessage());
-            RCA_ErrorLogger.logError('RCA_ProductCatalogBatchHelper', 'rollbackFailedCPQHierarchy', errMsg);
+        } catch (Exception ex) {
+            RCA_BatchExceptionLogger.logExceptions(
+                'RCA_ProductCatalogBatchHelper',
+                'rollbackFailedCPQHierarchy',
+                'Product2 / ComponentGroup',
+                null,
+                ex.getMessage()
+            );
+            RCA_BatchExceptionLogger.flushLogs();
         }
-    }
-    
-    // Email errors to system administrator
-    // public static void sendErrorNotification(List<String> errorMessages) {
-    //     Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-    //     mail.setToAddresses(new String[] { 'Shubham.m@etg.digital' });
-    //     mail.setSubject('RCA Product Catalog Batch Process Errors');
-    //     mail.setPlainTextBody('RCA_ProductCatalogBatch class failed:\n' + String.join(errorMessages, '\n'));
-    //     Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
-    // }
+    }    
     
 }

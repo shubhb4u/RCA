@@ -951,20 +951,12 @@ private class RCA_ProductCatalogBatchTest {
         insert new List<Product2>{ cpq1, cpq2 };
 
         // 2) Call markProductsProcessed(...) on these two products
-        List<String> errorMessages = new List<String>();
         List<SObject> failedRecords = new List<SObject>();
         RCA_ProductCatalogBatchHelper.markProductsProcessed(
             new List<Product2>{ cpq1, cpq2 },
-            errorMessages,
             failedRecords
         );
 
-        // 3) Assert there were no errors and no failed records
-        System.assertEquals(
-            0, 
-            errorMessages.size(), 
-            'Expected no errors when marking products as processed.'
-        );
         System.assertEquals(
             0, 
             failedRecords.size(), 
@@ -989,22 +981,12 @@ private class RCA_ProductCatalogBatchTest {
         );
 
         // 2) Call markProductsProcessed(...) on this fake product
-        List<String> errorMessages = new List<String>();
         List<SObject> failedRecords = new List<SObject>();
         RCA_ProductCatalogBatchHelper.markProductsProcessed(
             new List<Product2>{ fakeProd },
-            errorMessages,
             failedRecords
         );
 
-        // 3) Now, because '01t000000000000AA1' does not exist in the database,
-        //    the update should have failed, resulting in exactly one error message
-        //    and one failed record being captured.
-        System.assertEquals(
-            1,
-            errorMessages.size(),
-            'Expected one error message when updating a non‐existent Product2.'
-        );
         System.assertEquals(
             1,
             failedRecords.size(),
@@ -1155,7 +1137,6 @@ private class RCA_ProductCatalogBatchTest {
         Test.stopTest();
 
         // Clear any residual errors
-        batch.errorMessages.clear();
         batch.failedRecords.clear();
 
         // Calling finish() should not throw
@@ -1163,28 +1144,5 @@ private class RCA_ProductCatalogBatchTest {
         System.assert(true, 'finish() should complete without throwing when there are no errors.');
     }
 
-    @IsTest
-    static void testBatchFinish_WithErrors() {
-        // Create a batch instance with a dummy error and a dummy failed record
-        RCA_ProductCatalogBatch batch = new RCA_ProductCatalogBatch();
-        batch.errorMessages.add('SimulatedError');
-
-        // Create a dummy ProductComponentGroup (not inserted) and add to failedRecords
-        ProductComponentGroup pcg = new ProductComponentGroup(
-            ParentProductId     = '001000000000002',
-            Name                = 'DummyGrp_' + DateTime.now().getTime(),
-            MinBundleComponents = 0,
-            MaxBundleComponents = 1,
-            Sequence            = 1
-        );
-        batch.failedRecords.add(pcg);
-
-        // Calling finish() with errors should not throw
-        Test.startTest();
-            batch.finish(null);
-        Test.stopTest();
-
-        System.assert(true, 'finish() should complete without throwing even when errors exist.');
-    }
     
 }

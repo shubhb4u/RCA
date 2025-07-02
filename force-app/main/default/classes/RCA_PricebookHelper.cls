@@ -43,18 +43,6 @@ public class RCA_PricebookHelper {
             return;
         }
     
-    
-        if (String.isBlank(stdPB) || String.isBlank(rcaPB) || String.isBlank(psmoId)) {
-            RCA_BatchExceptionLogger.logExceptions(
-                'RCA_PricebookBatchVersion2',
-                'processProducts',
-                'Config',
-                null,
-                'Missing config values: stdPB=' + stdPB + ', rcaPB=' + rcaPB + ', psmoId=' + psmoId
-            );
-            return;
-        }
-    
         List<Product2> bundles = new List<Product2>();
         List<Product2> oldProducts = new List<Product2>();
         //Create PSMOs for all products as it is Mandate to create PBE's
