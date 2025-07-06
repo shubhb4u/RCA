@@ -17,7 +17,7 @@ RCA_MapAttributesFromCPQToRCABatch batch = new RCA_MapAttributesFromCPQToRCABatc
 Database.executeBatch(batch);
 
 
-RCA_PricebookBatchVersion2 batch = new RCA_PricebookBatchVersion2(new List<Id>{'01tKj00000QXLuuIAH'});
+RCA_PricebookBatchVersion2 batch = new RCA_PricebookBatchVersion2(new List<Id>{'01tKj00000QXEQYIA5', '01tKj00000QXVftIAH', '01tKj00000QXdY5IAL'});
 Database.executeBatch(batch);
 
 

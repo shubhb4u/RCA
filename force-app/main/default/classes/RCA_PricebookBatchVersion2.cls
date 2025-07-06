@@ -13,10 +13,10 @@ global class RCA_PricebookBatchVersion2 implements Database.Batchable<SObject>, 
 
     global Database.QueryLocator start(Database.BatchableContext bc) {
 
-        String baseQuery = 'SELECT Id, Name, StockKeepingUnit, Type FROM Product2';
+        String baseQuery = 'SELECT Id, Name, StockKeepingUnit, Type, SBQQ__SubscriptionType__c, SBQQ__SubscriptionPricing__c, SBQQ__SubscriptionTerm__c, IsProcessed__c FROM Product2 Where IsProcessed__c =  false';
         
         if (productIds != null && !productIds.isEmpty()) {
-            return Database.getQueryLocator(baseQuery + ' WHERE Id IN :productIds');
+            return Database.getQueryLocator(baseQuery + ' AND Id IN :productIds');
         } else {
             return Database.getQueryLocator(baseQuery);
         }
@@ -44,7 +44,6 @@ global class RCA_PricebookBatchVersion2 implements Database.Batchable<SObject>, 
     
 
     global void finish(Database.BatchableContext bc) {
-        RCA_BatchExceptionLogger.flushLogs();
     }
     
 }
