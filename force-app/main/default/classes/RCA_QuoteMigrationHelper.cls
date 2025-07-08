@@ -1,7 +1,9 @@
 public class RCA_QuoteMigrationHelper {
     public static void processQuotes(List<SBQQ__Quote__c> oldQuotesList){
         try{
-        List<Quote> newQuotesToInsert = new List<Quote>();
+            Pricing_Method_Config__mdt config = Pricing_Method_Config__mdt.getInstance('PercentOfTotal');
+            String RCA_PricebookId = config.RCA_PricebookId__c;
+            List<Quote> newQuotesToInsert = new List<Quote>();
             List<SBQQ__Quote__c> oldQuotesToUpdate = new List<SBQQ__Quote__c>();
             for (SBQQ__Quote__c oldQuote : oldQuotesList) {
                 Quote newQuote = new Quote();
@@ -16,6 +18,7 @@ public class RCA_QuoteMigrationHelper {
                 newQuote.ContractId = oldQuote.SBQQ__MasterContract__c;
                 newQuote.PartnerAccountId = oldQuote.SBQQ__Partner__c;
                 newQuote.StartDate = oldQuote.SBQQ__StartDate__c;
+                newQuote.Pricebook2Id = RCA_PricebookId;
                 
                 newQuotesToInsert.add(newQuote);
                 oldQuote.Is_Migrated__c=true;

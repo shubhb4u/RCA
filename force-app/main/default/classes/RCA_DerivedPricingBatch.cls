@@ -2,6 +2,7 @@ global class RCA_DerivedPricingBatch implements Database.Batchable<SObject>, Dat
 
     private RCA_DerivedPricingHelper helper;
     private List<Id> productIds;
+    //private List<String> errorMessages = new List<String>();
 
     public RCA_DerivedPricingBatch() {
         this.helper = new RCA_DerivedPricingHelper();
@@ -13,8 +14,8 @@ global class RCA_DerivedPricingBatch implements Database.Batchable<SObject>, Dat
     }
 
     global Database.QueryLocator start(Database.BatchableContext BC) {
-        String baseQuery = 'SELECT Id, Name, StockKeepingUnit, SBQQ__SubscriptionPercent__c, SBQQ__SubscriptionBase__c, SBQQ__SubscriptionTarget__c ' +
-                           'FROM Product2 WHERE SBQQ__PricingMethod__c = \'Percent Of Total\'';
+        String baseQuery = 'SELECT Id, Name, StockKeepingUnit, SBQQ__SubscriptionPercent__c, IsProcessed__c,        SBQQ__SubscriptionBase__c, SBQQ__SubscriptionTarget__c, SBQQ__SubscriptionType__c, SBQQ__SubscriptionPricing__c ' +
+                           'FROM Product2 WHERE IsProcessed__c =  false AND SBQQ__PricingMethod__c = \'Percent Of Total\'';
 
         if (productIds != null && !productIds.isEmpty()) {
             baseQuery += ' AND Id IN :productIds';
@@ -28,7 +29,6 @@ global class RCA_DerivedPricingBatch implements Database.Batchable<SObject>, Dat
     }
 
     global void finish(Database.BatchableContext BC) {
-        
-
+       
     }
 }

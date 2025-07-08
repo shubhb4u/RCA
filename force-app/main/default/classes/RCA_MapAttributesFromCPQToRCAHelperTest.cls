@@ -127,8 +127,6 @@ public class RCA_MapAttributesFromCPQToRCAHelperTest {
         Product2 updatedProd = [SELECT Id, BasedOnId FROM Product2 WHERE Id = :prod.Id];
        // System.assertNotEquals(null, updatedProd.BasedOnId, 'BasedOnId should be set');
     }
-
-    
   @isTest
     static void tocreatetestProductClassificationsNegative() {
         ProductClassification pc = new ProductClassification(

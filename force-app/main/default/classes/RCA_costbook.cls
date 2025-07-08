@@ -2,6 +2,7 @@ public class RCA_costbook {
     public void createCostBookEntries() {
         //Step 1: get the Id of the Standard Costbook from the custom metadata Type instead of hardcoding
         Pricing_Method_Config__mdt config = Pricing_Method_Config__mdt.getInstance('PercentOfTotal'); 
+        //List<Id> productids = new List<Id>{'01tKj00000QXbkcIAD','01tKj00000QXbkXIAT'};
         List<SBQQ__Cost__c> costRecords = [SELECT SBQQ__Product__c, SBQQ__UnitCost__c FROM SBQQ__Cost__c];//fetches all the cost prices of the products
         List<CostBookEntry> costBookEntries = new List<CostBookEntry>();  // List to store the costbookEntry
         //Step 2: get all the products Id's which has cost price and store them in productIds List
@@ -39,7 +40,7 @@ public class RCA_costbook {
         //step 6 : Create a List of SKU to store newly created products ad type bundle as we follow convention (oldSKU+' - bundle')
         List<String> newSKUList = new List<String>();
         for(Product2 product : [select StockKeepingUnit from Product2 where Id In :productIds]){
-            String newSku = product.StockKeepingUnit+'Bundle';
+            String newSku = product.StockKeepingUnit+' - Bundle';
             newSKUList.add(newSku);
         }
         //step 7 : Create a Map of new ProductId and Its SKU
@@ -53,7 +54,7 @@ public class RCA_costbook {
             CostBookEntry entry = new CostBookEntry();
             entry.CostBookId = costBookId;
             entry.ProductId=product.Id;
-            String sku = product.StockKeepingUnit.remove('Bundle');
+            String sku = product.StockKeepingUnit.remove(' - Bundle');
             Id oldproductId = ProductSKuToId.get(sku);
             entry.Cost=ProductToPriceMap.get(oldproductId);
             entry.EffectiveFrom = DateTime.now();

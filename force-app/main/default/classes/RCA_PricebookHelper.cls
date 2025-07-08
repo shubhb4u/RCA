@@ -51,12 +51,12 @@ public class RCA_PricebookHelper {
         if (Test.isRunningTest() && forceExceptionInTest) {
              throw new AuraHandledException('Simulated exception for test coverage');
         }
-
-        //1. Create PSMOs for all products as it is Mandate to create PBE's
-        upsertPSMOs(products,  'old');
     
         // If Standalone products exist - 
         if (!products.isEmpty()) {
+            
+            //1. Create PSMOs for all products as it is Mandate to create PBE's
+            upsertPSMOs(products,  'old');
     
             Map<Id, List<PriceBookEntry>> existingStandardPBEs = getExistingPBEMap(products, new List<Id>{stdPB}, null);
             Map<Id, List<PriceBookEntry>> existingRCAPBEs = getExistingPBEMap(products, new List<Id>{rcaPB}, null);
@@ -259,7 +259,7 @@ public class RCA_PricebookHelper {
             Database.UpsertResult[] results = Database.upsert(dmlList, false);
             for (Integer i = 0; i < results.size(); i++) {
                 if (!results[i].isSuccess()) {
-                    String sObjectType = dmlList[i].getSObjectType().getDescribe().getName(); // ✅ get type from original record
+                    String sObjectType = dmlList[i].getSObjectType().getDescribe().getName(); 
                     RCA_BatchExceptionLogger.logExceptions(
                         'RCA_PricebookBatchVersion2',
                         context,

@@ -322,8 +322,13 @@ public class RCA_BundleDerivedPricingBatchHelper {
     private Id createPSMO(Id productId) {
         try {
             // Check if One Time PSMO already exists for the product
-            List<ProductSellingModelOption> existingPSMOs = [SELECT ProductSellingModelId FROM ProductSellingModelOption 
-                WHERE Product2Id = :productId AND ProductSellingModel.Name = 'One Time'LIMIT 1];
+            List<ProductSellingModelOption> existingPSMOs = [
+                SELECT ProductSellingModelId 
+                FROM ProductSellingModelOption 
+                WHERE Product2Id = :productId 
+                  AND ProductSellingModel.Name = 'One Time'
+                LIMIT 1
+            ];
     
             if (!existingPSMOs.isEmpty()) {
                 return existingPSMOs[0].ProductSellingModelId;

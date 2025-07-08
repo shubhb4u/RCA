@@ -3,7 +3,6 @@ public class RCA_QuoteLines {
         
         Pricing_Method_Config__mdt config = Pricing_Method_Config__mdt.getInstance('PercentOfTotal');
         String Rca_PriceBookId = config.RCA_PricebookId__c;
-        //System.debug(Rca_PriceBookId);
         //get all the new Quotes which are just migrated
         set<String> migratedQuoteNames = new set<String>(); // holds old quote names
         //all the new quotes list
@@ -15,6 +14,8 @@ public class RCA_QuoteLines {
             migatedQuotesIdToNameMap.put(quote.Name,quote.Id);
             migratedQuoteNames.add(oldquoteName);
         }
+        
+        
         //stores the Sku and Id of migrated bundle products
         Map<String,Id> bundleProducts = new Map<String,Id>();
         for(Product2 prod : [select Id,StockKeepingUnit from Product2 where StockKeepingUnit Like '% - Bundle']){
@@ -26,11 +27,12 @@ public class RCA_QuoteLines {
         
         // Stores the old quotes Id's of quote and their products in quote lines
         Map<Id,List<Id>> oldQuoteToProducts = new Map<Id,List<Id>>();
+        
         //collect all the products which are in oldquote it means all are old products
         List<Id> quotelineProductId = new List<Id>();
         
-        List<SBQQ__QuoteLine__c> oldQuotelinesList = [select SBQQ__Product__c,SBQQ__AdditionalDiscountAmount__c,SBQQ__Discount__c,SBQQ__Quantity__c,SBQQ__Description__c,SBQQ__SubscriptionTerm__c,
-                                                      SBQQ__EndDate__c,SBQQ__PartnerDiscount__c,SBQQ__Quote__r.Name,SBQQ__SegmentLabel__c,SBQQ__StartDate__c from SBQQ__QuoteLine__c where SBQQ__Quote__r.Name = 'Q-00005'];
+        List<SBQQ__QuoteLine__c> oldQuotelinesList = [select  Id,SBQQ__Product__c,SBQQ__AdditionalDiscountAmount__c,SBQQ__Discount__c,SBQQ__Quantity__c,SBQQ__Description__c,SBQQ__SubscriptionTerm__c,
+                                                      SBQQ__EndDate__c,SBQQ__PartnerDiscount__c,SBQQ__Quote__r.Name,SBQQ__SegmentLabel__c,SBQQ__StartDate__c from SBQQ__QuoteLine__c  where IsMigrated__c=False];
         
         // stores quotes and their related quote lines in Map
         for(SBQQ__QuoteLine__c quoteline : oldQuotelinesList){
@@ -42,8 +44,8 @@ public class RCA_QuoteLines {
                 oldQuoteToProducts.put(quoteline.SBQQ__Quote__c,new List<Id>{quoteline.SBQQ__Product__c});
             }
         }
-        
         // the above code 
+        
         List<Product2> prouductsList = [select Id,StockKeepingUnit from Product2 where Id In :quotelineProductId];
         Map<Id,String> oldProductSkuToId = new Map<Id,String>();
         for(Product2 prod : prouductsList){
@@ -55,7 +57,7 @@ public class RCA_QuoteLines {
         for(PricebookEntry pbe : pricebookEntryList){
             productToPricebookEntry.put(pbe.Product2Id,pbe.Id);
         }
-        
+        List<SBQQ__QuoteLine__c> oldQuoteLinesToUpdate = new List<SBQQ__QuoteLine__c>();
         List<QuoteLineItem> newquotelineItemToInsert = new List<QuoteLineItem>();
         for(SBQQ__QuoteLine__c quoteline :oldQuotelinesList){
             QuoteLineItem item = new QuoteLineItem();
@@ -80,6 +82,9 @@ public class RCA_QuoteLines {
             }
             
             newquotelineItemToInsert.add(item);
+            quoteline.IsMigrated__c=True;
+            oldQuoteLinesToUpdate.add(quoteline);
+            
         }
         for(QuoteLineItem quote : newquotelineItemToInsert){
             System.debug('new RCA Quote Id '+ quote.QuoteId);
@@ -88,6 +93,9 @@ public class RCA_QuoteLines {
                 }
         if(!newquotelineItemToInsert.isEmpty()){
             insert newquotelineItemToInsert;
+        }
+        if(!oldQuoteLinesToUpdate.isEmpty()){
+            update oldQuoteLinesToUpdate;
         }
     }
 }

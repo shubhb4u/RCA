@@ -43,5 +43,6 @@ public class RCA_QuoteMigrationTest {
         Quote newQuote = [select QuoteAccountId,ContactId,Name,OpportunityId from Quote where Name =:oldName];
         System.AssertEquals(newQuote.QuoteAccountId,oldquote.SBQQ__Account__c,'Account is mismatched');
         System.AssertEquals(oldName,newQuote.Name,'Quote is not created');
+        
     }
 }

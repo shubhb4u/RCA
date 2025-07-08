@@ -1,4 +1,6 @@
 public class RCA_CostBookHelper {
+    
+    
 
     public static String getCostBookId() {
         Pricing_Method_Config__mdt config = Pricing_Method_Config__mdt.getInstance('PercentOfTotal');
@@ -24,7 +26,7 @@ public class RCA_CostBookHelper {
     public static Set<String> getBundleSKUs(List<Product2> products) {
         Set<String> bundleSKUs = new Set<String>();
         for (Product2 product : products) {
-            bundleSKUs.add(product.StockKeepingUnit + 'Bundle');
+            bundleSKUs.add(product.StockKeepingUnit + ' - Bundle');
         }
         return bundleSKUs;
     }
@@ -45,7 +47,7 @@ public class RCA_CostBookHelper {
     public static List<CostBookEntry> createBundleCostBookEntries(List<Product2> bundleProducts, Map<String, Id> baseSkuToId, Map<Id, Decimal> productToPriceMap, String costBookId) {
         List<CostBookEntry> entries = new List<CostBookEntry>();
         for (Product2 bundle : bundleProducts) {
-            String baseSku = bundle.StockKeepingUnit.remove('Bundle');
+            String baseSku = bundle.StockKeepingUnit.remove(' - Bundle');
             Id baseProductId = baseSkuToId.get(baseSku);
             Decimal baseCost = productToPriceMap.get(baseProductId);
 
