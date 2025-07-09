@@ -21,13 +21,15 @@ global class RCA_MapAttributesFromCPQToRCABatch implements Database.Batchable<SO
             RCA_MapAttributesFromCPQToRCAHelper helper = new RCA_MapAttributesFromCPQToRCAHelper();
             helper.process(productList);
         } catch (Exception e) {
-            RCA_BatchExceptionLogger.logException(
+            RCA_BatchExceptionLogger.logExceptions(
                 'RCA_MapAttributesFromCPQToRCABatch',
                 'execute',
                 'Product2',
-                null,
-                productList != null && !productList.isEmpty() ? String.valueOf(productList[0].Id) : 'N/A'
+                new List<Database.Error>(),
+                productList != null && !productList.isEmpty() ? String.valueOf(productList[0].Id) + ' has some error. Review this product' : 'productList received is empty !'
             );
+        }finally{
+            RCA_BatchExceptionLogger.flushLogs();
         }
     }
 

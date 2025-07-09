@@ -2,7 +2,6 @@ global class RCA_DerivedPricingBatch implements Database.Batchable<SObject>, Dat
 
     private RCA_DerivedPricingHelper helper;
     private List<Id> productIds;
-    //private List<String> errorMessages = new List<String>();
 
     public RCA_DerivedPricingBatch() {
         this.helper = new RCA_DerivedPricingHelper();

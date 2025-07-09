@@ -13,8 +13,9 @@ global class RCA_Pricebook implements Database.Batchable<SObject>, Database.Stat
 
     global Database.QueryLocator start(Database.BatchableContext bc) {
 
-        String baseQuery = 'SELECT Id, Name, StockKeepingUnit, Type, SBQQ__SubscriptionType__c, SBQQ__SubscriptionPricing__c, SBQQ__SubscriptionTerm__c, SBQQ__PricingMethod__c, IsProcessed__c FROM Product2 Where IsProcessed__c =  false AND SBQQ__PricingMethod__c != \'Percent Of Total\'';
-        
+        String baseQuery = 'SELECT Id, Name, StockKeepingUnit, Type, SBQQ__SubscriptionType__c, SBQQ__SubscriptionPricing__c, SBQQ__SubscriptionTerm__c, IsProcessed__c FROM Product2 Where IsProcessed__c =  false' +
+        ' AND SBQQ__PricingMethod__c = \'List\'';
+                
         if (productIds != null && !productIds.isEmpty()) {
             return Database.getQueryLocator(baseQuery + ' AND Id IN :productIds');
         } else {

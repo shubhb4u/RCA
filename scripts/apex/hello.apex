@@ -13,19 +13,18 @@ RCA_ProductCatalogBatch batch = new RCA_ProductCatalogBatch(new List<Id>{'01tKj0
 Database.executeBatch(batch);
 
 
-RCA_MapAttributesFromCPQToRCABatch batch = new RCA_MapAttributesFromCPQToRCABatch(new List<Id>{'01tKj00000QXVuTIAX', '01tKj00000QXWGbIAP'});
+RCA_MapAttributesFromCPQToRCABatch batch = new RCA_MapAttributesFromCPQToRCABatch(new List<Id>{'01tKj00000QXpBQIA1'});
 Database.executeBatch(batch);
 
 
-RCA_PricebookBatchVersion2 batch = new RCA_PricebookBatchVersion2(new List<Id>{'01tKj00000QXEQYIA5', '01tKj00000QXVftIAH', '01tKj00000QXdY5IAL'});
+RCA_Pricebook batch = new RCA_Pricebook(new List<Id>{'01tKj00000QXdY5IAL'});
 Database.executeBatch(batch);
 
 
-RCA_DerivedPricingBatch batch = new RCA_DerivedPricingBatch(new List<Id>{ '01tKj00000QXYbVIAX'});
+RCA_DerivedPricingBatch batch = new RCA_DerivedPricingBatch(new List<Id>{ '01tKj00000QXbkrIAD'});
 Database.executeBatch(batch);
 
-RCA_BundleDerivedPricingBatch batch = new RCA_BundleDerivedPricingBatch(new List<Id>{ '01tKj00000QXYCUIA5'});
-Database.executeBatch(batch);
+
 
 RCA_CostBookBatch batch = new RCA_CostBookBatch(new List<Id>{ '01tKj00000QXQHbIAP'});
 Database.executeBatch(batch);
