@@ -25,7 +25,6 @@ RCA_DerivedPricingBatch batch = new RCA_DerivedPricingBatch(new List<Id>{ '01tKj
 Database.executeBatch(batch);
 
 
-
 RCA_CostBookBatch batch = new RCA_CostBookBatch(new List<Id>{ '01tKj00000QXQHbIAP'});
 Database.executeBatch(batch);
 

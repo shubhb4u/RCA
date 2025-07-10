@@ -11,7 +11,6 @@ public class RCA_DerivedPricingHelper {
     public List<PriceBookEntryDerivedPrice> newDerivedPrices = new List<PriceBookEntryDerivedPrice>();
 
 
-
     public RCA_DerivedPricingHelper(){
 
         List<Pricebook2> stdPBList = [SELECT Id FROM PriceBook2 WHERE Name = 'Standard Price Book' LIMIT 1];
@@ -80,6 +79,8 @@ public class RCA_DerivedPricingHelper {
             }
             
             createDerivedPricesForNewPBEs(rcaPBEs);
+
+            insertDerivedPrices();
         }
     }
     
@@ -347,7 +348,7 @@ public class RCA_DerivedPricingHelper {
             }
             
             newDerivedPrices.add(dp);
-            insertDerivedPrices();
+            
         }
     }
 

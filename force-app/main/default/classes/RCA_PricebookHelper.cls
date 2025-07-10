@@ -4,15 +4,25 @@ public class RCA_PricebookHelper {
     public  Id stdPB; 
     public  Id rcaPB;
     public  Id proId;
+    public  Id clonePBId;
     public  String type = 'Bundle';
     public  Map<String, Id> psmMap = new Map<String, Id>(); 
 
 
     public RCA_PricebookHelper(){
 
+        List<Pricing_Method_Config__mdt> configList = [SELECT Label,DeveloperName,Pricing_Method__c,RCA_PricebookId__c FROM Pricing_Method_Config__mdt where Pricing_Method__c = 'List' LIMIT 1];
+        if(!configList.isEmpty() && String.isNotBlank(configList[0].RCA_PricebookId__c)){
+            clonePBId = configList[0].RCA_PricebookId__c;
+        }
+
         List<Pricebook2> stdPBList = [SELECT Id FROM PriceBook2 WHERE Name = 'Standard Price Book' LIMIT 1];
         if (!stdPBList.isEmpty()) {
             stdPB = stdPBList[0].Id;
+        }
+
+        if(String.isBlank(clonePBId)){
+            clonePBId = stdPB;
         }
 
         List<Pricebook2> rcaPBList = [SELECT Id FROM PriceBook2 WHERE Name = 'RCA_PriceBook' LIMIT 1];
@@ -34,13 +44,13 @@ public class RCA_PricebookHelper {
         }
 
         // Now this condition will be covered safely
-        if (String.isBlank(stdPB) || String.isBlank(rcaPB) ) {
+        if (String.isBlank(stdPB) || String.isBlank(rcaPB) || String.isBlank(proId) || psmMap != null  ) {
             RCA_BatchExceptionLogger.logExceptions(
                 'RCA_PricebookBatchVersion2',
                 'processProducts',
                 'Config',
                 null,
-                'Missing config values: stdPB=' + stdPB + ', rcaPB=' + rcaPB 
+                'Missing config values: stdPB=' + stdPB + ', rcaPB=' + rcaPB  + ', proId=' + proId  + ', psmMap=' + psmMap  
             );
             return;
         }
@@ -58,7 +68,7 @@ public class RCA_PricebookHelper {
             //1. Create PSMOs for all products as it is Mandate to create PBE's
             upsertPSMOs(products,  'old');
     
-            Map<Id, List<PriceBookEntry>> existingStandardPBEs = getExistingPBEMap(products, new List<Id>{stdPB}, null);
+            Map<Id, List<PriceBookEntry>> existingStandardPBEs = getExistingPBEMap(products, new List<Id>{clonePBId}, null);
             Map<Id, List<PriceBookEntry>> existingRCAPBEs = getExistingPBEMap(products, new List<Id>{rcaPB}, null);
     
             //If oldProducts have standard PBE, then just create a new RCA PBE - 
@@ -153,7 +163,7 @@ public class RCA_PricebookHelper {
 
             // Fallback for newly created Bundle products that may not have standard PBEs, so get it from their old Product2 record
             if (prod.Type == 'Bundle') {
-                Map<Id, List<PriceBookEntry>> oldPBEMap = getExistingPBEMap(new List<Product2>(), new List<Id>{stdPB}, prod.StockKeepingUnit);
+                Map<Id, List<PriceBookEntry>> oldPBEMap = getExistingPBEMap(new List<Product2>(), new List<Id>{clonePBId}, prod.StockKeepingUnit);
                 existingPBEs = oldPBEMap.isEmpty() ? null : oldPBEMap.values().get(0); // pick the list from the map
             }
 
@@ -185,7 +195,7 @@ public class RCA_PricebookHelper {
             if (String.isBlank(prod.SBQQ__SubscriptionType__c) || String.isBlank(prod.SBQQ__SubscriptionPricing__c)) {
                 key = 'OneTimeMonths';
             } else if (prod.SBQQ__SubscriptionType__c == 'Renewable') {
-                key = 'TermDefinedMonths';
+                key = 'TermDefinedMonths';  
             } else if (prod.SBQQ__SubscriptionType__c == 'Evergreen') {
                 key = 'EvergreenMonths';
             } else if (prod.SBQQ__SubscriptionType__c == 'One-Time') {
@@ -220,7 +230,6 @@ public class RCA_PricebookHelper {
             // RCA path: check RCA PBEs to avoid duplicates, base price from standard
             else {
                 List<PricebookEntry> existingRCAPBEs = existingRCAMap.get(prod.Id);
-                // Boolean alreadyExists = false;
     
                 if (existingRCAPBEs != null) {
                     for (PricebookEntry existing : existingRCAPBEs) {
@@ -231,6 +240,7 @@ public class RCA_PricebookHelper {
                             break;
                         }
                     }
+                    // pbId = '01sKj000002tg8oIAA';
                 }
             }
 
