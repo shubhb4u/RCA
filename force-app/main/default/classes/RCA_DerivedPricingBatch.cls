@@ -1,15 +1,33 @@
-global class RCA_DerivedPricingBatch implements Database.Batchable<SObject> {
-    
-    global Database.QueryLocator start(Database.BatchableContext bc) {
-        // Dummy query — we don’t need actual records, just to kick off logic
-        return Database.getQueryLocator([SELECT Id FROM Product2 LIMIT 1]);
+global class RCA_DerivedPricingBatch implements Database.Batchable<SObject>, Database.Stateful {
+
+    private RCA_DerivedPricingHelper helper;
+    private List<Id> productIds;
+
+    public RCA_DerivedPricingBatch() {
+        this.helper = new RCA_DerivedPricingHelper();
     }
 
-    global void execute(Database.BatchableContext bc, List<SObject> scope) {
-        RCA_DerivedPricingHelper.processDerivedPricing();
+    public RCA_DerivedPricingBatch(List<Id> productIds) {
+        this.productIds = productIds;
+        this.helper = new RCA_DerivedPricingHelper();
     }
 
-    global void finish(Database.BatchableContext bc) {
-        // Optionally add logic like logging or sending a confirmation email
+    global Database.QueryLocator start(Database.BatchableContext BC) {
+        String baseQuery = 'SELECT Id, Name, StockKeepingUnit, SBQQ__SubscriptionPercent__c, IsProcessed__c,        SBQQ__SubscriptionBase__c, SBQQ__SubscriptionTarget__c, SBQQ__SubscriptionType__c, SBQQ__SubscriptionPricing__c ' +
+                           'FROM Product2 WHERE IsProcessed__c =  false AND SBQQ__PricingMethod__c = \'Percent Of Total\'';
+
+        if (productIds != null && !productIds.isEmpty()) {
+            baseQuery += ' AND Id IN :productIds';
+        }
+
+        return Database.getQueryLocator(baseQuery);
+    }
+
+    global void execute(Database.BatchableContext BC, List<SObject> potProducts) {
+        helper.processProducts((List<Product2>) potProducts);
+    }
+
+    global void finish(Database.BatchableContext BC) {
+       
     }
 }

@@ -17,3 +17,7 @@ WHERE SBQQ__Product__c = '01tKj00000QXM0FIAX']) {
         System.debug('Data type of ' + targetFieldApiName + ' is: ' + fieldDescribe.getType());
     }
 }
+
+Database.executeBatch(new RCA_DerivedPricingBatch());
+
+Database.executeBatch(new RCA_Pricebook(new List<Id>{'01tKj00000QXdY5IAL'}));
