@@ -3,13 +3,11 @@ global class RCA_Pricebook implements Database.Batchable<SObject>, Database.Stat
     private List<Id> productIds;
     private RCA_PricebookHelper helper = new RCA_PricebookHelper();
 
-    
     global RCA_Pricebook() {}
 
     global RCA_Pricebook(List<Id> productIds) {
         this.productIds = productIds;
     }
-
 
     global Database.QueryLocator start(Database.BatchableContext bc) {
 
@@ -42,8 +40,6 @@ global class RCA_Pricebook implements Database.Batchable<SObject>, Database.Stat
         }
     }
     
-
     global void finish(Database.BatchableContext bc) {
     }
-    
 }
