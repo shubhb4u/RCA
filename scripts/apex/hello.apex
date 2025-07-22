@@ -20,4 +20,4 @@ WHERE SBQQ__Product__c = '01tKj00000QXM0FIAX']) {
 
 Database.executeBatch(new RCA_DerivedPricingBatch());
 
-Database.executeBatch(new RCA_Pricebook(new List<Id>{'01tKj00000QXdY5IAL'}));
+Database.executeBatch(new RCA_Pricebook(new List<Id>{'01tKj00000QXVfoIAH'}));

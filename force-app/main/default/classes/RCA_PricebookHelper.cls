@@ -45,7 +45,7 @@ public class RCA_PricebookHelper {
         // Validation - now checking for custom pricebooks instead of specific RCA pricebook
         if (String.isBlank(stdPB) || customPBIds.isEmpty() || String.isBlank(proId) || psmMap.isEmpty()) {
             RCA_BatchExceptionLogger.logExceptions(
-                'RCA_PricebookBatchVersion2',
+                'RCA_Pricebook',
                 'processProducts',
                 'Config',
                 null,
@@ -277,27 +277,34 @@ public class RCA_PricebookHelper {
         return standardPBEs;
     }
     
-    // FIXED: Create RCA PBEs ONLY for pricebooks where the product already has existing PBEs
+    //Create RCA PBEs ONLY for pricebooks where the product already has existing PBEs
     public List<PricebookEntry> createRCAPBEs(List<Product2> products, Map<Id, List<PriceBookEntry>> existingAllPBEs) {
         List<PricebookEntry> rcaPBEs = new List<PricebookEntry>();
         
         System.debug('Creating RCA PBEs for ' + products.size() + ' products');
         
+        // FIXED: Bulk query for RCA pricebooks to avoid queries in loop
+        Map<Id, Pricebook2> rcaPBMap = new Map<Id, Pricebook2>([SELECT Id, Name FROM Pricebook2 WHERE Id IN :rcaPBIds]);
+        
+        // FIXED: Bulk query for original pricebooks to avoid queries in loop
+        Map<String, Id> originalPBMap = new Map<String, Id>();
+        for(Pricebook2 pb : [SELECT Id, Name FROM Pricebook2 WHERE IsActive = true AND Name != 'Standard Price Book' AND (NOT Name LIKE 'RCA_%')]) {
+            originalPBMap.put(pb.Name, pb.Id);
+        }
+        
         // Create a map of RCA pricebook to original pricebook mapping
         Map<Id, Id> rcaToOriginalPBMap = new Map<Id, Id>();
         Map<Id, String> rcaPBNameMap = new Map<Id, String>();
         
+        // FIXED: Replace the entire loop that had queries inside with this optimized version
         for(Id rcaPBId : rcaPBIds) {
-            List<Pricebook2> rcaPBList = [SELECT Id, Name FROM Pricebook2 WHERE Id = :rcaPBId LIMIT 1];
-            if(!rcaPBList.isEmpty()) {
-                String rcaPBName = rcaPBList[0].Name;
+            if(rcaPBMap.containsKey(rcaPBId)) {
+                String rcaPBName = rcaPBMap.get(rcaPBId).Name;
                 rcaPBNameMap.put(rcaPBId, rcaPBName);
                 String originalPBName = rcaPBName.replace('RCA_', '');
                 
-                // Find the original pricebook ID
-                List<Pricebook2> originalPBList = [SELECT Id FROM Pricebook2 WHERE Name = :originalPBName AND IsActive = true LIMIT 1];
-                if(!originalPBList.isEmpty()) {
-                    rcaToOriginalPBMap.put(rcaPBId, originalPBList[0].Id);
+                if(originalPBMap.containsKey(originalPBName)) {
+                    rcaToOriginalPBMap.put(rcaPBId, originalPBMap.get(originalPBName));
                 }
             }
         }
@@ -405,7 +412,7 @@ public class RCA_PricebookHelper {
         System.debug('Total RCA PBEs created/returned: ' + rcaPBEs.size());
         return rcaPBEs;
     }
-    
+        
     // Helper method to get PSM key based on product subscription type
     public String getPSMKey(Product2 prod) {
         if (String.isBlank(prod.SBQQ__SubscriptionType__c) || String.isBlank(prod.SBQQ__SubscriptionPricing__c)) {
